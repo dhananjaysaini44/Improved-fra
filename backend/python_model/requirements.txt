@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+
+# OCR stack
+Pillow
+pytesseract
+opencv-python
+pdf2image
+numpy
