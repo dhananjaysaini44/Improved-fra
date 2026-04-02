@@ -8,7 +8,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 import io
 import json
+import os
 import re
+import shutil
 import sqlite3
 import tempfile
 
@@ -36,6 +38,11 @@ try:
     from pdf2image import convert_from_path
 except Exception:
     convert_from_path = None
+
+try:
+    from pypdf import PdfReader
+except Exception:
+    PdfReader = None
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -106,6 +113,14 @@ LOCATION_BOUNDARY_PATTERNS = [
 
 app = FastAPI(title="FRA OCR and Duplicate Detection API", version="2.0.0")
 
+TESSERACT_CMD = os.getenv("TESSERACT_CMD", "").strip()
+TESSERACT_LANG = os.getenv("TESSERACT_LANG", "eng").strip() or "eng"
+TESSERACT_PSM = os.getenv("TESSERACT_PSM", "6").strip() or "6"
+TESSERACT_OEM = os.getenv("TESSERACT_OEM", "3").strip() or "3"
+
+if pytesseract is not None and TESSERACT_CMD:
+    pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
+
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -119,8 +134,14 @@ def sanitize_text(value: Optional[str]) -> str:
 
 def normalize_text(value: Optional[str]) -> str:
     value = sanitize_text(value).lower()
+    value = re.sub(r"\b(s/o|d/o|w/o)\b", " ", value)
+    value = re.sub(r"\bmr\b|\bmrs\b|\bms\b|\bshri\b|\bsmt\b", " ", value)
     value = re.sub(r"[^a-z0-9\s]", " ", value)
     return re.sub(r"\s+", " ", value).strip()
+
+
+def tokens(value: Optional[str]) -> set[str]:
+    return {token for token in normalize_text(value).split() if token}
 
 
 def safe_json_loads(value: Optional[str]) -> Dict[str, Any]:
@@ -142,6 +163,19 @@ def try_decode_bytes(payload: bytes) -> str:
     return ""
 
 
+def tesseract_runtime_available() -> bool:
+    if pytesseract is None:
+        return False
+    explicit = getattr(pytesseract.pytesseract, "tesseract_cmd", "") or ""
+    if explicit and Path(explicit).exists():
+        return True
+    return shutil.which("tesseract") is not None
+
+
+def build_tesseract_config() -> str:
+    return f"--oem {TESSERACT_OEM} --psm {TESSERACT_PSM}"
+
+
 def extract_pdf_text_fallback(payload: bytes) -> str:
     decoded = payload.decode("latin-1", errors="ignore")
     matches = re.findall(r"\(([^()]*)\)", decoded)
@@ -151,6 +185,21 @@ def extract_pdf_text_fallback(payload: bytes) -> str:
     return sanitize_text(text)
 
 
+def extract_pdf_text_with_reader(payload: bytes) -> str:
+    if PdfReader is None:
+        return ""
+    try:
+        reader = PdfReader(io.BytesIO(payload))
+        parts = []
+        for page in reader.pages:
+            page_text = page.extract_text() or ""
+            if page_text.strip():
+                parts.append(page_text)
+        return sanitize_text("\n".join(parts))
+    except Exception:
+        return ""
+
+
 def preprocess_image_bytes(payload: bytes) -> Optional["np.ndarray"]:
     if Image is None or cv2 is None or np is None:
         return None
@@ -158,8 +207,18 @@ def preprocess_image_bytes(payload: bytes) -> Optional["np.ndarray"]:
         image = Image.open(io.BytesIO(payload)).convert("RGB")
         image_np = np.array(image)
         gray = cv2.cvtColor(image_np, cv2.COLOR_RGB2GRAY)
-        _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        return thresh
+        denoised = cv2.fastNlMeansDenoising(gray)
+        thresh = cv2.adaptiveThreshold(
+            denoised,
+            255,
+            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY,
+            31,
+            11,
+        )
+        kernel = np.ones((1, 1), np.uint8)
+        morph = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+        return morph
     except Exception:
         return None
 
@@ -170,6 +229,7 @@ def run_ocr_on_image(payload: bytes) -> Tuple[str, Dict[str, Any]]:
         "opencv": cv2 is not None,
         "numpy": np is not None,
         "pytesseract": pytesseract is not None,
+        "tesseract_binary": tesseract_runtime_available(),
     }
     if not all(dependency_status.values()):
         return "", {
@@ -188,7 +248,11 @@ def run_ocr_on_image(payload: bytes) -> Tuple[str, Dict[str, Any]]:
 
     try:
         image = Image.fromarray(processed)
-        text = pytesseract.image_to_string(image)
+        text = pytesseract.image_to_string(
+            image,
+            lang=TESSERACT_LANG,
+            config=build_tesseract_config(),
+        )
         return sanitize_text(text), {
             "method": "tesseract_image",
             "dependency_status": dependency_status,
@@ -203,12 +267,24 @@ def run_ocr_on_image(payload: bytes) -> Tuple[str, Dict[str, Any]]:
 
 
 def run_ocr_on_pdf(payload: bytes) -> Tuple[str, Dict[str, Any]]:
+    embedded_text = extract_pdf_text_with_reader(payload)
+    if embedded_text:
+        return embedded_text, {
+            "method": "pdf_text_layer",
+            "dependency_status": {
+                "pypdf": PdfReader is not None,
+            },
+            "message": "Extracted embedded PDF text without OCR.",
+        }
+
     dependency_status = {
+        "pypdf": PdfReader is not None,
         "pdf2image": convert_from_path is not None,
         "pillow": Image is not None,
         "opencv": cv2 is not None,
         "numpy": np is not None,
         "pytesseract": pytesseract is not None,
+        "tesseract_binary": tesseract_runtime_available(),
     }
     if not all(dependency_status.values()):
         fallback_text = extract_pdf_text_fallback(payload)
@@ -281,6 +357,20 @@ def first_match(patterns: List[str], text: str) -> Optional[str]:
     return None
 
 
+def extract_aadhaar_candidates(text: str) -> List[str]:
+    raw_matches = re.findall(r"(?:\d[\s-]?){12}", text)
+    candidates = []
+    for match in raw_matches:
+        digits = re.sub(r"\D", "", match)
+        if len(digits) == 12:
+            candidates.append(digits)
+    return list(dict.fromkeys(candidates))
+
+
+def extract_year_candidates(text: str) -> List[str]:
+    return list(dict.fromkeys(re.findall(r"\b(19\d{2}|20\d{2})\b", text)))
+
+
 def extract_structured_fields(text: str, metadata: Dict[str, Any]) -> Dict[str, Any]:
     extracted = {field: None for field in FIELD_PATTERNS}
     for field, patterns in FIELD_PATTERNS.items():
@@ -303,6 +393,18 @@ def extract_structured_fields(text: str, metadata: Dict[str, Any]) -> Dict[str, 
     for field, value in metadata_defaults.items():
         if not extracted.get(field) and value:
             extracted[field] = sanitize_text(value)
+
+    aadhaar_candidates = extract_aadhaar_candidates(text)
+    if aadhaar_candidates and not extracted.get("aadhaar_number"):
+        extracted["aadhaar_number"] = aadhaar_candidates[0]
+
+    extracted["years_mentioned"] = extract_year_candidates(text)
+    extracted["text_length"] = len(text)
+    extracted["document_signals"] = {
+        "has_aadhaar_candidate": bool(aadhaar_candidates),
+        "has_location_boundary_section": bool(extracted.get("location_boundaries")),
+        "has_land_extent": bool(extracted.get("extent_of_land")),
+    }
 
     extracted["normalized"] = {
         "claimant_name": normalize_text(extracted.get("claimant_name")),
@@ -365,6 +467,23 @@ def score_duplicate_candidate(current: Dict[str, Any], candidate: Dict[str, Any]
                 score += weight * 0.5
                 reasons.append(f"Moderate {key.replace('_', ' ')} similarity ({similarity:.2f}).")
 
+    current_tokens = tokens(current.get("claimant_name"))
+    candidate_tokens = tokens(candidate.get("claimant_name"))
+    if current_tokens and candidate_tokens:
+        overlap = len(current_tokens & candidate_tokens) / max(len(current_tokens), len(candidate_tokens))
+        if overlap >= 0.75:
+            score += 0.08
+            reasons.append(f"Strong claimant token overlap ({overlap:.2f}).")
+
+    if current.get("location_boundaries") and candidate.get("location_boundaries"):
+        current_boundary = normalize_text(" ".join(current.get("location_boundaries") or []))
+        candidate_boundary = normalize_text(" ".join(candidate.get("location_boundaries") or []))
+        if current_boundary and candidate_boundary:
+            similarity = SequenceMatcher(None, current_boundary, candidate_boundary).ratio()
+            if similarity >= 0.88:
+                score += 0.08
+                reasons.append(f"High boundary description similarity ({similarity:.2f}).")
+
     return min(score, 0.99), reasons
 
 
@@ -399,6 +518,7 @@ def load_claim_candidates(db_path: Path, current_claim_id: Optional[int]) -> Lis
                 "district": prior_fields.get("district") or row_dict.get("district"),
                 "state": prior_fields.get("state") or row_dict.get("state"),
                 "aadhaar_number": prior_fields.get("aadhaar_number"),
+                "location_boundaries": prior_fields.get("location_boundaries"),
                 "status": row_dict.get("status"),
                 "created_at": row_dict.get("created_at"),
             }
@@ -456,7 +576,7 @@ def detect_duplicates(
         "explanation": explanation,
         "matching_strategy": {
             "exact_fields": ["aadhaar_number", "claimant_name", "village", "district", "state"],
-            "fuzzy_fields": ["claimant_name", "village", "district"],
+            "fuzzy_fields": ["claimant_name", "village", "district", "location_boundaries"],
         },
     }
 
@@ -491,14 +611,29 @@ def merge_document_results(results: List[Dict[str, Any]], metadata: Dict[str, An
     for key, value in merged.items():
         if value and not enriched.get(key):
             enriched[key] = value
-    enriched["normalized"] = {
-        "claimant_name": normalize_text(enriched.get("claimant_name")),
-        "village": normalize_text(enriched.get("village")),
-        "district": normalize_text(enriched.get("district")),
-        "state": normalize_text(enriched.get("state")),
-        "aadhaar_number": re.sub(r"\D", "", enriched.get("aadhaar_number") or ""),
-    }
     return enriched
+
+
+def estimate_extraction_confidence(extracted_fields: Dict[str, Any], duplicate_analysis: Dict[str, Any], document_results: List[Dict[str, Any]]) -> Dict[str, Any]:
+    key_fields = ["claimant_name", "village", "district", "state", "aadhaar_number", "extent_of_land"]
+    populated = sum(1 for field in key_fields if extracted_fields.get(field))
+    confidence = 0.25 + (populated / len(key_fields)) * 0.45
+
+    successful_docs = sum(1 for item in document_results if item.get("text"))
+    if document_results:
+        confidence += min(successful_docs / len(document_results), 1.0) * 0.2
+
+    if duplicate_analysis.get("duplicate_score", 0) >= 0.85:
+        confidence += 0.05
+
+    confidence = min(round(confidence, 4), 0.99)
+    return {
+        "overall": confidence,
+        "populated_key_fields": populated,
+        "total_key_fields": len(key_fields),
+        "documents_with_text": successful_docs,
+        "total_documents": len(document_results),
+    }
 
 
 @app.get("/health")
@@ -512,6 +647,14 @@ def health() -> Dict[str, Any]:
             "numpy": np is not None,
             "pytesseract": pytesseract is not None,
             "pdf2image": convert_from_path is not None,
+            "pypdf": PdfReader is not None,
+            "tesseract_binary": tesseract_runtime_available(),
+        },
+        "ocr_config": {
+            "tesseract_cmd": getattr(pytesseract.pytesseract, "tesseract_cmd", "") if pytesseract is not None else "",
+            "language": TESSERACT_LANG,
+            "psm": TESSERACT_PSM,
+            "oem": TESSERACT_OEM,
         },
         "database_path": str(DEFAULT_DB_PATH),
     }
@@ -540,6 +683,7 @@ async def predict(
     extracted_fields = merge_document_results(document_results, parsed_metadata)
     duplicate_analysis = detect_duplicates(extracted_fields, parsed_metadata, DEFAULT_DB_PATH)
     combined_text = "\n".join(item["text"] for item in document_results if item.get("text")).strip()
+    extraction_confidence = estimate_extraction_confidence(extracted_fields, duplicate_analysis, document_results)
 
     result = {
         "summary": f"Processed {len(document_results)} document(s)",
@@ -556,8 +700,19 @@ async def predict(
         "ocr_text": combined_text,
         "extracted_fields": extracted_fields,
         "duplicate_analysis": duplicate_analysis,
+        "extraction_confidence": extraction_confidence,
+        "service_readiness": {
+            "can_ocr_images": all([
+                Image is not None,
+                cv2 is not None,
+                np is not None,
+                pytesseract is not None,
+                tesseract_runtime_available(),
+            ]),
+            "can_extract_pdf_text": PdfReader is not None or convert_from_path is not None,
+        },
         "run_at": utc_now_iso(),
-        "model_version": "fra-ocr-dedupe-1.0",
+        "model_version": "fra-ocr-dedupe-1.1",
     }
 
     artifact_name = f"predict-{parsed_metadata.get('claimId', 'unknown')}-{datetime.now().strftime('%Y%m%d%H%M%S')}.json"
