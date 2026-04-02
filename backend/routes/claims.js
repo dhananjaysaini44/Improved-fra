@@ -37,6 +37,26 @@ async function callModelAPI(files, payload) {
   return response.data;
 }
 
+function buildModelCandidates(currentClaimId) {
+  const rows = db.prepare(`
+    SELECT id, claimant_name, village, district, state, status, model_result, created_at
+    FROM claims
+    WHERE (? IS NULL OR id <> ?)
+    ORDER BY created_at DESC
+  `).all(currentClaimId ?? null, currentClaimId ?? null);
+
+  return rows.map((row) => ({
+    id: row.id,
+    claimant_name: row.claimant_name,
+    village: row.village,
+    district: row.district,
+    state: row.state,
+    status: row.status,
+    model_result: row.model_result,
+    created_at: row.created_at,
+  }));
+}
+
 // Get all claims with optional filters
 router.get('/', (req, res) => {
   try {
@@ -312,7 +332,14 @@ router.post('/submit', upload.array('documents'), async (req, res) => {
     let modelResult = null;
     let modelStatus = 'not_run';
     try {
-      modelResult = await callModelAPI(savedPaths, { claimId, claimant_name, village, state, district });
+      modelResult = await callModelAPI(savedPaths, {
+        claimId,
+        claimant_name,
+        village,
+        state,
+        district,
+        existing_claims: buildModelCandidates(claimId),
+      });
       modelStatus = 'success';
     } catch (err) {
       modelStatus = 'error';

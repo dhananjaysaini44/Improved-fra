@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: fra-ocr-service
+    runtime: docker
+    plan: free
+    rootDir: backend/python_model
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: TESSERACT_LANG
+        value: eng
+      - key: TESSERACT_PSM
+        value: "6"
+      - key: TESSERACT_OEM
+        value: "3"
