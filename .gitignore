@@ -39,5 +39,7 @@ backend/uploads/
 # Local project notes
 TODO.md
 replit.md
+.replit
 context.md
 agent-rules.md
+tasks.md
