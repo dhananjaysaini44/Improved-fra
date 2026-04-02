@@ -487,6 +487,21 @@ def score_duplicate_candidate(current: Dict[str, Any], candidate: Dict[str, Any]
     return min(score, 0.99), reasons
 
 
+def normalize_candidate_record(record: Dict[str, Any]) -> Dict[str, Any]:
+    prior_fields = parse_existing_model_fields(record.get("model_result"))
+    return {
+        "id": record.get("id"),
+        "claimant_name": prior_fields.get("claimant_name") or record.get("claimant_name"),
+        "village": prior_fields.get("village") or record.get("village"),
+        "district": prior_fields.get("district") or record.get("district"),
+        "state": prior_fields.get("state") or record.get("state"),
+        "aadhaar_number": prior_fields.get("aadhaar_number"),
+        "location_boundaries": prior_fields.get("location_boundaries"),
+        "status": record.get("status"),
+        "created_at": record.get("created_at"),
+    }
+
+
 def load_claim_candidates(db_path: Path, current_claim_id: Optional[int]) -> List[Dict[str, Any]]:
     if not db_path.exists():
         return []
@@ -506,24 +521,22 @@ def load_claim_candidates(db_path: Path, current_claim_id: Optional[int]) -> Lis
     finally:
         conn.close()
 
-    candidates = []
-    for row in rows:
-        row_dict = dict(row)
-        prior_fields = parse_existing_model_fields(row_dict.get("model_result"))
-        candidates.append(
-            {
-                "id": row_dict["id"],
-                "claimant_name": prior_fields.get("claimant_name") or row_dict.get("claimant_name"),
-                "village": prior_fields.get("village") or row_dict.get("village"),
-                "district": prior_fields.get("district") or row_dict.get("district"),
-                "state": prior_fields.get("state") or row_dict.get("state"),
-                "aadhaar_number": prior_fields.get("aadhaar_number"),
-                "location_boundaries": prior_fields.get("location_boundaries"),
-                "status": row_dict.get("status"),
-                "created_at": row_dict.get("created_at"),
-            }
-        )
-    return candidates
+    return [normalize_candidate_record(dict(row)) for row in rows]
+
+
+def load_claim_candidates_from_metadata(metadata: Dict[str, Any], current_claim_id: Optional[int]) -> List[Dict[str, Any]]:
+    raw_candidates = metadata.get("existing_claims") or metadata.get("existingClaims") or []
+    if not isinstance(raw_candidates, list):
+        return []
+
+    normalized = []
+    for item in raw_candidates:
+        if not isinstance(item, dict):
+            continue
+        if current_claim_id is not None and str(item.get("id")) == str(current_claim_id):
+            continue
+        normalized.append(normalize_candidate_record(item))
+    return normalized
 
 
 def detect_duplicates(
@@ -537,7 +550,9 @@ def detect_duplicates(
     except (TypeError, ValueError):
         claim_id = None
 
-    candidates = load_claim_candidates(db_path, claim_id)
+    candidates = load_claim_candidates_from_metadata(metadata, claim_id)
+    if not candidates:
+        candidates = load_claim_candidates(db_path, claim_id)
     matches = []
     for candidate in candidates:
         score, reasons = score_duplicate_candidate(extracted_fields, candidate)
@@ -725,6 +740,7 @@ async def predict(
 
 
 if __name__ == "__main__":
+    port = int(os.getenv("PORT", "8000"))
     import uvicorn
 
-    uvicorn.run("server:app", host="127.0.0.1", port=8000, reload=False)
+    uvicorn.run("server:app", host="0.0.0.0", port=port, reload=False)
