@@ -84,6 +84,7 @@ try { db.exec("ALTER TABLE claims ADD COLUMN rejection_reason TEXT"); } catch (e
 try { db.exec("ALTER TABLE claims ADD COLUMN model_result TEXT"); } catch (e) {}
 try { db.exec("ALTER TABLE claims ADD COLUMN model_status TEXT"); } catch (e) {}
 try { db.exec("ALTER TABLE claims ADD COLUMN model_run_at DATETIME"); } catch (e) {}
+try { db.exec("ALTER TABLE alerts ADD COLUMN status TEXT DEFAULT 'active'"); } catch (e) {}
 try { db.exec("ALTER TABLE claims ADD COLUMN pipeline_status TEXT DEFAULT 'PENDING'"); } catch (e) {}
 try { db.exec("ALTER TABLE claims ADD COLUMN nlp_embedding TEXT"); } catch (e) {}
 try { db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_gram_panchayat_unique ON users(gram_panchayat_id)"); } catch (e) {}
