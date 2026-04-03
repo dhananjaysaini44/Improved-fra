@@ -9,6 +9,7 @@
 ![Redux](https://img.shields.io/badge/Redux_Toolkit-2-764ABC?logo=redux&logoColor=white)
 ![Leaflet](https://img.shields.io/badge/Leaflet-WebGIS-199900?logo=leaflet&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-Remote_OCR_Service-009688?logo=fastapi&logoColor=white)
+![Algorand](https://img.shields.io/badge/Algorand-TestNet_Anchoring-000000?logo=algorand&logoColor=white)
 
 FRA Atlas and Web GIS System (Drishti) is a full-stack Forest Rights Act decision support system built for claim intake, claim tracking, admin review, GIS-based visualization, and audit visibility. The application combines a React/Vite frontend with an Express/SQLite backend and a deployed Python OCR/model service for document analysis during claim submission.
 
@@ -54,6 +55,7 @@ The UI is focused on the states referenced throughout the project:
 - Node.js
 - Express 5
 - better-sqlite3
+- Algorand JavaScript SDK (`algosdk`)
 - JSON Web Tokens
 - bcryptjs
 - multer
@@ -171,6 +173,8 @@ Important backend files:
 
 - `backend/server.js`: Express app bootstrap, middleware, schema initialization, route registration
 - `backend/db.js`: SQLite database connection
+- `backend/services/algorand.js`: Algorand TestNet anchoring service for moderation audit hashes
+- `backend/utils/hash.js`: SHA-256 hash utility used for audit payload hashing
 - `backend/routes/auth.js`: registration, login, profile, password endpoints
 - `backend/routes/claims.js`: claim CRUD, approval/rejection, document upload, model integration
 - `backend/routes/users.js`: admin-only user management
@@ -187,6 +191,9 @@ Important integration behavior in the backend:
 - `model_result.json` is stored alongside the retained claim documents
 - the backend calls the remote Python service for both `/predict` and `/pipeline/run`
 - remote pipeline output is persisted locally into SQLite tables after the response returns
+- model API calls now support retries and configurable timeouts to handle Render cold starts and transient 5xx/429 conditions
+- duplicate rapid submissions are blocked within a configurable time window and the recent claim is returned instead of creating extra rows
+- pipeline triggering is now skipped when OCR/model inference fails, so `pipeline_status` does not misleadingly appear successful on OCR errors
 
 ### Python OCR/model and pipeline service
 
@@ -279,8 +286,12 @@ JWT_SECRET=replace-with-a-strong-secret
 PORT=3000
 NODE_ENV=development
 MODEL_ENDPOINT=https://improved-fra.onrender.com/predict
-MODEL_TIMEOUT_MS=60000
+MODEL_TIMEOUT_MS=180000
+MODEL_MAX_RETRIES=2
+MODEL_RETRY_DELAY_MS=1500
+CLAIM_DUPLICATE_WINDOW_SECONDS=120
 MODEL_API_KEY=copy-from-render-if-enabled
+ALGORAND_MNEMONIC=your-25-word-mnemonic-for-testnet-anchoring
 ```
 
 `JWT_SECRET` should always be set explicitly outside local testing.
@@ -340,6 +351,7 @@ What the service does now:
 - Extracts structured FRA fields from OCR text
 - Runs duplicate detection against claim candidates supplied by the backend
 - Runs an additive post-submit ML pipeline for validation, NLP similarity, GIS overlap checks, and confidence scoring
+- Performs bounded OCR to stay reliable under free-tier constraints (image downscaling, per-call OCR timeout, and capped PDF OCR pages/DPI)
 - Returns extraction confidence and duplicate-analysis output
 
 Security and deployment notes:
@@ -348,6 +360,11 @@ Security and deployment notes:
 - `/predict` and `/pipeline/run` support optional API-key verification through `MODEL_API_KEY`
 - the deployed service currently uses a lightweight fallback NLP backend to stay within Render free-tier memory limits
 - OCR/PDF libraries are imported lazily in the Python service to reduce startup memory usage
+- recommended OCR runtime envs on Render:
+  - `TESSERACT_TIMEOUT_SEC=20`
+  - `PDF_OCR_MAX_PAGES=2`
+  - `PDF_OCR_DPI=140`
+  - `OCR_MAX_IMAGE_SIDE=1800`
 
 The frontend does not call the Python service directly. The backend calls it server-to-server during `POST /api/claims/submit`.
 
@@ -401,6 +418,8 @@ Base path: `/api/claims`
 - `POST /:id/approve`
 - `POST /:id/reject`
 - `POST /submit`
+
+`POST /submit` also supports duplicate-submit protection; when triggered, it returns the recent existing claim payload with `duplicate_submission_blocked: true`.
 
 ### Alerts
 
@@ -467,7 +486,8 @@ The implemented claim flow looks like this:
 8. The backend triggers a non-blocking remote pipeline run for validation, NLP similarity, GIS conflict checks, and scoring.
 9. Remote pipeline results are persisted locally into SQLite pipeline tables.
 10. Admin users can approve or reject claims.
-11. Claim and pipeline actions are logged to `system_logs`.
+11. Approve/reject events generate local SHA-256 hashes and attempt Algorand anchoring.
+12. Claim, pipeline, and moderation actions are logged to `system_logs`, with blockchain audit rows in `audit_ledger`.
 
 ## Database notes
 
@@ -483,14 +503,31 @@ Useful tables:
 - `spatial_conflicts`: polygon overlap results
 - `confidence_scores`: OCR, NLP, GIS, and overall claim scoring
 - `land_parcels`: GIS-support table introduced for pipeline expansion
+- `audit_ledger`: blockchain shadow-audit table for approve/reject events with local hash and optional Algorand tx id
 
 The backend performs lightweight SQLite migrations at startup by attempting `ALTER TABLE` statements for newer fields.
+
+## Blockchain audit integration (Algorand)
+
+The backend includes a blockchain shadow-audit path for moderation actions:
+
+- on `POST /api/claims/:id/approve` and `POST /api/claims/:id/reject`, the backend:
+  - generates a SHA-256 hash of the moderation payload
+  - attempts to anchor that hash to Algorand TestNet
+  - stores both local hash and Algorand tx id in `audit_ledger`
+- if Algorand anchoring fails, claim moderation still succeeds and the failure is handled gracefully
+
+Runtime notes:
+
+- set `ALGORAND_MNEMONIC` for live anchoring
+- if mnemonic is missing/placeholder, anchoring is skipped and app flow continues
 
 ## Build and quality status
 
 Current observed status from the repository:
 
 - `npm run build` succeeds
+- `cd backend && npm test` succeeds (pipeline read-model regression)
 - `npm run lint` currently fails
 
 Main reasons lint fails:
