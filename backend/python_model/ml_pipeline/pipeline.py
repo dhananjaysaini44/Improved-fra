@@ -7,7 +7,7 @@ from ml_pipeline.config import config
 from ml_pipeline.db import queries
 from ml_pipeline.exceptions import PipelineError
 from ml_pipeline.models.nlp_model import embed_text, model_backend
-from ml_pipeline.stages import gis_stage, nlp_stage, ocr_stage, validation_stage
+from ml_pipeline.stages import gis_stage, nlp_stage, ocr_stage, parcel_stage, validation_stage
 
 
 def _weighted_score(ocr_score: float, nlp_score: float, gis_score: float) -> float:
@@ -29,7 +29,10 @@ class MLPipeline:
             nlp = nlp_stage.run(claim_id)
 
             queries.update_pipeline_status(claim_id, "GIS_PROCESSING")
-            gis = gis_stage.run(claim_id)
+            gis = gis_stage.run(claim_id, ocr)
+
+            queries.update_pipeline_status(claim_id, "PARCEL_LINKING")
+            parcel = parcel_stage.run(claim_id, ocr)
 
             queries.update_pipeline_status(claim_id, "SCORING")
             overall = _weighted_score(
@@ -54,6 +57,7 @@ class MLPipeline:
                 "validation": val,
                 "nlp": nlp,
                 "gis": gis,
+                "parcel": parcel,
                 "score": score,
             }
         except Exception as exc:
@@ -114,6 +118,11 @@ class MLPipeline:
 
         gis_score = 1.0
         conflicts = []
+        claimed_area_ha = None
+        polygon_area_ha = None
+        area_discrepancy_ratio = None
+        warnings: list[str] = []
+        boundary_checks: dict[str, Any] = {}
         try:
             from shapely.geometry import shape
             poly = claim.get("polygon")
@@ -122,6 +131,20 @@ class MLPipeline:
                 poly = json.loads(poly)
             if poly:
                 a = shape(poly)
+                area_degrees = float(a.area)
+                polygon_area_ha = (area_degrees * (111320.0 ** 2)) / 10000.0
+                extracted_fields = model_result.get("extracted_fields") or {}
+                area_value = extracted_fields.get("land_area_ha") or extracted_fields.get("extent_of_land")
+                if area_value is not None:
+                    import re
+                    match = re.search(r"([0-9]+(?:\.[0-9]+)?)", str(area_value))
+                    if match:
+                        claimed_area_ha = float(match.group(1))
+                        if claimed_area_ha > 0 and polygon_area_ha > 0:
+                            area_discrepancy_ratio = abs(polygon_area_ha - claimed_area_ha) / max(polygon_area_ha, claimed_area_ha)
+                            if area_discrepancy_ratio > 0.5:
+                                warnings.append("Submitted polygon area differs substantially from OCR-extracted land area.")
+                boundary_checks = gis_stage._boundary_validation(poly, claim, extracted_fields)
                 overlaps = 0
                 for item in existing:
                     other = item.get("polygon")
@@ -154,8 +177,21 @@ class MLPipeline:
             "gis_score": round(gis_score, 4),
             "conflicts": conflicts,
         }
+        if claimed_area_ha is not None:
+            gis_result["claimed_area_ha"] = round(claimed_area_ha, 4)
+        if polygon_area_ha is not None:
+            gis_result["polygon_area_ha"] = round(polygon_area_ha, 4)
+        if area_discrepancy_ratio is not None:
+            gis_result["area_discrepancy_ratio"] = round(area_discrepancy_ratio, 4)
+        for key, value in boundary_checks.items():
+            if key != "warnings":
+                gis_result[key] = value
+        combined_warnings = warnings + boundary_checks.get("warnings", [])
+        if combined_warnings:
+            gis_result["warnings"] = combined_warnings
 
         overall = _weighted_score(ocr_score, nlp_result["similarity_score"], gis_score)
+        parcel_result = parcel_stage.match_from_payload(claim, model_result.get("extracted_fields") or {})
         score = {
             "ocr_score": round(ocr_score, 4),
             "nlp_score": round(nlp_result["similarity_score"], 4),
@@ -170,5 +206,6 @@ class MLPipeline:
             "validation": validation,
             "nlp": nlp_result,
             "gis": gis_result,
+            "parcel": parcel_result,
             "score": score,
         }

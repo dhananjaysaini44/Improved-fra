@@ -22,6 +22,8 @@ class PipelineConfig:
     TIMEOUT_SECONDS = int(_get("PIPELINE_TIMEOUT_SECONDS", "60"))
     SQLITE_DB_PATH = _get("SQLITE_DB_PATH", "./fra_atlas.db")
     UPLOADS_BASE_PATH = _get("UPLOADS_BASE_PATH", "./uploads")
+    BOUNDARY_DATA_DIR = _get("BOUNDARY_DATA_DIR", "./reference_boundaries")
+    PARCEL_REFERENCE_DIR = _get("PARCEL_REFERENCE_DIR", "./reference_records")
 
 
 config = PipelineConfig()

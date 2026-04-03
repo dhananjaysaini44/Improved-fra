@@ -46,11 +46,14 @@ FIELD_PATTERNS = {
     ],
     "gram_panchayat": [
         r"Gram Panchayat\s*[:\-]\s*(.+)",
+        r"G\.?\s*P\.?\s*[:\-]\s*(.+)",
+        r"Panchayat\s*[:\-]\s*(.+)",
     ],
     "tehsil_taluka": [
         r"Tehsil/Taluka\s*[:\-]\s*(.+)",
         r"Tehsil\s*[:\-]\s*(.+)",
         r"Taluka\s*[:\-]\s*(.+)",
+        r"Taluk\s*[:\-]\s*(.+)",
     ],
     "district": [
         r"District\s*[:\-]\s*(.+)",
@@ -73,12 +76,58 @@ FIELD_PATTERNS = {
         r"Extent of Land\s*[:\-]\s*(.+)",
         r"Land Area\s*[:\-]\s*(.+)",
     ],
+    "survey_number": [
+        r"Survey(?: No| Number)?\s*[:#\-]?\s*([0-9A-Za-z/\-]{1,30})",
+        r"S\.\s*No\.?\s*[:#\-]?\s*([0-9A-Za-z/\-]{1,30})",
+    ],
+    "khata_number": [
+        r"Khata(?: No| Number)?\s*[:#\-]?\s*([0-9A-Za-z/\-]{1,30})",
+        r"Khatha(?: No| Number)?\s*[:#\-]?\s*([0-9A-Za-z/\-]{1,30})",
+        r"Patta(?: No| Number)?\s*[:#\-]?\s*([0-9A-Za-z/\-]{1,30})",
+    ],
+    "hissa_number": [
+        r"Hissa(?: No| Number)?\s*[:#\-]?\s*([0-9A-Za-z/\-]{1,20})",
+        r"Sub(?:division)?\s*[:#\-]?\s*([0-9A-Za-z/\-]{1,20})",
+    ],
+    "forest_compartment": [
+        r"Forest Compartment\s*[:#\-]?\s*([0-9A-Za-z/\-]{1,30})",
+        r"Compartment\s*[:#\-]?\s*([0-9A-Za-z/\-]{1,30})",
+        r"Comp\.\s*[:#\-]?\s*([0-9A-Za-z/\-]{1,30})",
+    ],
+    "forest_beat": [
+        r"Forest Beat\s*[:#\-]?\s*([A-Za-z0-9\s\-]{2,40})",
+        r"Beat\s*[:#\-]?\s*([A-Za-z0-9\s\-]{2,40})",
+    ],
+    "forest_range": [
+        r"Forest Range\s*[:#\-]?\s*([A-Za-z0-9\s\-]{2,40})",
+        r"Range\s*[:#\-]?\s*([A-Za-z0-9\s\-]{2,40})",
+    ],
+    "boundary_north": [
+        r"North\s*[:\-]\s*(.+?)(?=\n|South|East|West|$)",
+    ],
+    "boundary_south": [
+        r"South\s*[:\-]\s*(.+?)(?=\n|North|East|West|$)",
+    ],
+    "boundary_east": [
+        r"East\s*[:\-]\s*(.+?)(?=\n|North|South|West|$)",
+    ],
+    "boundary_west": [
+        r"West\s*[:\-]\s*(.+?)(?=\n|North|South|East|$)",
+    ],
+    "land_area_ha": [
+        r"([0-9]+(?:\.[0-9]+)?)\s*(?:hectare|hectares|ha\b)",
+    ],
+    "pin_code": [
+        r"\b([1-9][0-9]{5})\b",
+    ],
     "attached_map": [
         r"Attached Map\s*[:\-]\s*(.+)",
     ],
     "supporting_evidence": [
         r"Supporting Evidence(?: of Occupation)?\s*[:\-]\s*(.+)",
     ],
+    "photo_exif_lat": [],
+    "photo_exif_lon": [],
 }
 
 LOCATION_BOUNDARY_PATTERNS = [
@@ -425,6 +474,79 @@ def extract_year_candidates(text: str) -> List[str]:
     return list(dict.fromkeys(re.findall(r"\b(19\d{2}|20\d{2})\b", text)))
 
 
+def _convert_exif_coord(value: Any, ref: Optional[str]) -> Optional[float]:
+    try:
+        parts = list(value)
+        if len(parts) != 3:
+            return None
+
+        def _to_float(part: Any) -> float:
+            if isinstance(part, tuple) and len(part) == 2 and part[1]:
+                return float(part[0]) / float(part[1])
+            if hasattr(part, "numerator") and hasattr(part, "denominator") and part.denominator:
+                return float(part.numerator) / float(part.denominator)
+            return float(part)
+
+        degrees = _to_float(parts[0])
+        minutes = _to_float(parts[1])
+        seconds = _to_float(parts[2])
+        decimal = degrees + (minutes / 60.0) + (seconds / 3600.0)
+        if str(ref or "").upper() in {"S", "W"}:
+            decimal *= -1
+        return round(decimal, 8)
+    except Exception:
+        return None
+
+
+def extract_exif_gps(payload: bytes) -> Dict[str, Any]:
+    if not payload.startswith(b"\xff\xd8"):
+        return {"photo_exif_lat": None, "photo_exif_lon": None}
+
+    Image = pil_image_module()
+    ExifTags = _load_optional("PIL.ExifTags")
+    if Image is None or ExifTags is None:
+        return {"photo_exif_lat": None, "photo_exif_lon": None}
+
+    try:
+        image = Image.open(io.BytesIO(payload))
+        exif = None
+        try:
+            exif = image.getexif()
+        except Exception:
+            exif = None
+        if not exif and hasattr(image, "_getexif"):
+            try:
+                exif = image._getexif()
+            except Exception:
+                exif = None
+        if not exif:
+            return {"photo_exif_lat": None, "photo_exif_lon": None}
+
+        gps_info = None
+        gps_tag_id = next((tag_id for tag_id, name in ExifTags.TAGS.items() if name == "GPSInfo"), None)
+        if isinstance(exif, dict):
+            gps_info = exif.get(gps_tag_id)
+        else:
+            try:
+                gps_info = exif.get(gps_tag_id)
+            except Exception:
+                gps_info = None
+        if not gps_info:
+            return {"photo_exif_lat": None, "photo_exif_lon": None}
+
+        gps_tags = ExifTags.GPSTAGS
+        mapped = {
+            gps_tags.get(tag_id, tag_id): gps_info[tag_id]
+            for tag_id in gps_info
+        }
+
+        lat = _convert_exif_coord(mapped.get("GPSLatitude"), mapped.get("GPSLatitudeRef"))
+        lon = _convert_exif_coord(mapped.get("GPSLongitude"), mapped.get("GPSLongitudeRef"))
+        return {"photo_exif_lat": lat, "photo_exif_lon": lon}
+    except Exception:
+        return {"photo_exif_lat": None, "photo_exif_lon": None}
+
+
 def extract_structured_fields(text: str, metadata: Dict[str, Any]) -> Dict[str, Any]:
     extracted = {field: None for field in FIELD_PATTERNS}
     for field, patterns in FIELD_PATTERNS.items():
@@ -458,6 +580,9 @@ def extract_structured_fields(text: str, metadata: Dict[str, Any]) -> Dict[str, 
         "has_aadhaar_candidate": bool(aadhaar_candidates),
         "has_location_boundary_section": bool(extracted.get("location_boundaries")),
         "has_land_extent": bool(extracted.get("extent_of_land")),
+        "has_survey_number": bool(extracted.get("survey_number")),
+        "has_forest_reference": bool(extracted.get("forest_compartment") or extracted.get("forest_beat") or extracted.get("forest_range")),
+        "has_exif_coordinates": bool(extracted.get("photo_exif_lat") is not None and extracted.get("photo_exif_lon") is not None),
     }
 
     extracted["normalized"] = {
@@ -653,6 +778,10 @@ def detect_duplicates(
 def build_document_result(document: UploadFile, payload: bytes, metadata: Dict[str, Any]) -> Dict[str, Any]:
     text, extraction_info = extract_document_text(document.filename or "unknown", payload, document.content_type)
     structured_fields = extract_structured_fields(text, metadata)
+    exif_fields = extract_exif_gps(payload)
+    for key, value in exif_fields.items():
+        if structured_fields.get(key) is None:
+            structured_fields[key] = value
     return {
         "filename": document.filename,
         "size_bytes": len(payload),

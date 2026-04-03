@@ -131,6 +131,14 @@ const Map = () => {
 
   const claimLabel = (c) => `${c.claimantName || 'Unknown'} — ${c.village || '-'}, ${c.district || '-'}, ${c.state || '-'}`;
 
+  const claimSpatialSummary = (claim) => {
+    if ((claim?.spatialConflicts || []).length > 0) return `${claim.spatialConflicts.length} conflict(s)`;
+    if ((claim?.gisWarnings || []).length > 0) return `${claim.gisWarnings.length} warning(s)`;
+    if (claim?.parcelMatch?.best_match?.reference_id) return `parcel ${claim.parcelMatch.best_match.reference_id}`;
+    if ((claim?.pipelineStatus || '').toUpperCase().startsWith('SCORED')) return 'GIS checked';
+    return 'Pipeline pending';
+  };
+
   const getClaimCenter = (claim) => {
     const b = getClaimBounds(claim);
     if (!b) return null;
@@ -271,6 +279,7 @@ const Map = () => {
                             <div><strong>Village:</strong> ${claim.village || '-'} </div>
                             <div><strong>Status:</strong> ${claim.status || 'pending'} </div>
                             <div><strong>ID:</strong> ${claim.id}</div>
+                            <div><strong>Spatial:</strong> ${claimSpatialSummary(claim)}</div>
                           </div>`
                         );
                       }}
@@ -301,6 +310,7 @@ const Map = () => {
                   <div><strong>Selected Claim</strong></div>
                   <div>{(selectedClaim?.claimantName || 'Unknown')} — {(selectedClaim?.village || '-')}, {(selectedClaim?.district || '-')}, {(selectedClaim?.state || '-')}</div>
                   <div>ID: {selectedClaim?.id}</div>
+                  <div>Spatial: {claimSpatialSummary(selectedClaim)}</div>
                 </div>
               </Popup>
             </CircleMarker>

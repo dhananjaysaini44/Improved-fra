@@ -159,6 +159,11 @@ db.exec(`
     FOREIGN KEY (claim_id) REFERENCES claims(id) ON DELETE SET NULL
   );
 `);
+try { db.exec("ALTER TABLE land_parcels ADD COLUMN reference_id TEXT"); } catch (e) {}
+try { db.exec("ALTER TABLE land_parcels ADD COLUMN source_name TEXT"); } catch (e) {}
+try { db.exec("ALTER TABLE land_parcels ADD COLUMN match_confidence REAL"); } catch (e) {}
+try { db.exec("ALTER TABLE land_parcels ADD COLUMN match_basis TEXT"); } catch (e) {}
+try { db.exec("ALTER TABLE land_parcels ADD COLUMN metadata_json TEXT"); } catch (e) {}
 
 // Routes
 app.use('/api/auth', require('./routes/auth'));

@@ -30,6 +30,19 @@ const ClaimTracking = () => {
     return { text: 'No OCR result', className: 'bg-gray-100 text-gray-700' };
   };
 
+  const pipelineLabel = (claim) => {
+    if ((claim.spatialConflicts || []).length > 0) {
+      return { text: `${claim.spatialConflicts.length} spatial conflict(s)`, className: 'bg-red-100 text-red-800' };
+    }
+    if ((claim.gisWarnings || []).length > 0) {
+      return { text: `${claim.gisWarnings.length} GIS warning(s)`, className: 'bg-amber-100 text-amber-800' };
+    }
+    if ((claim.pipelineStatus || '').toUpperCase().startsWith('SCORED')) {
+      return { text: 'GIS checked', className: 'bg-blue-100 text-blue-800' };
+    }
+    return { text: 'Pipeline pending', className: 'bg-gray-100 text-gray-700' };
+  };
+
   return (
     <div>
       <div className="mb-8">
@@ -60,6 +73,7 @@ const ClaimTracking = () => {
               <th className="p-4 text-left">Village</th>
               <th className="p-4 text-left">Status</th>
               <th className="p-4 text-left">OCR / Duplicate</th>
+              <th className="p-4 text-left">GIS / Pipeline</th>
               <th className="p-4 text-left">Date</th>
               <th className="p-4 text-left">Actions</th>
             </tr>
@@ -81,6 +95,11 @@ const ClaimTracking = () => {
                 <td className="p-4">
                   <span className={`px-2 py-1 rounded text-xs font-medium ${duplicateLabel(claim).className}`}>
                     {duplicateLabel(claim).text}
+                  </span>
+                </td>
+                <td className="p-4">
+                  <span className={`px-2 py-1 rounded text-xs font-medium ${pipelineLabel(claim).className}`}>
+                    {pipelineLabel(claim).text}
                   </span>
                 </td>
                 <td className="p-4">{claim.submissionDate || '-'}</td>

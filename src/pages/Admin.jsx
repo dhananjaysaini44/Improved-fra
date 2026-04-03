@@ -30,6 +30,19 @@ const Admin = () => {
     return { label: 'Clear', className: 'bg-green-100 text-green-800' };
   };
 
+  const getPipelineSeverity = (claim) => {
+    const suspicious = claim?.confidenceScores?.is_suspicious;
+    const warningCount = claim?.gisWarnings?.length || 0;
+    const conflictCount = claim?.spatialConflicts?.length || 0;
+    if (suspicious || conflictCount > 0 || warningCount > 0) {
+      return { label: 'Spatial review', className: 'bg-amber-100 text-amber-800' };
+    }
+    if ((claim?.pipelineStatus || '').toUpperCase().startsWith('SCORED')) {
+      return { label: 'Pipeline scored', className: 'bg-blue-100 text-blue-800' };
+    }
+    return { label: 'Pending', className: 'bg-gray-100 text-gray-700' };
+  };
+
   // Check admin access and fetch users
   useEffect(() => {
     if (usersError) {
@@ -354,6 +367,7 @@ const Admin = () => {
                     <th className="p-2 text-left">Village</th>
                     <th className="p-2 text-left">State</th>
                     <th className="p-2 text-left">OCR Review</th>
+                    <th className="p-2 text-left">GIS Review</th>
                     <th className="p-2 text-left">Submitted</th>
                     <th className="p-2 text-left">Actions</th>
                   </tr>
@@ -361,7 +375,7 @@ const Admin = () => {
                 <tbody>
                   {pendingClaims.length === 0 ? (
                     <tr>
-                      <td colSpan="7" className="p-4 text-center text-gray-500">
+                      <td colSpan="8" className="p-4 text-center text-gray-500">
                         No pending claims.
                       </td>
                     </tr>
@@ -388,6 +402,11 @@ const Admin = () => {
                               </button>
                             )}
                           </div>
+                        </td>
+                        <td className="p-2">
+                          <span className={`px-2 py-1 rounded text-xs font-medium ${getPipelineSeverity(c).className}`}>
+                            {getPipelineSeverity(c).label}
+                          </span>
                         </td>
                         <td className="p-2">{c.submissionDate || '-'}</td>
                         <td className="p-2 space-x-2">
@@ -645,6 +664,140 @@ const Admin = () => {
                         </div>
                       ))}
                   </div>
+                </div>
+
+                <div className="border rounded-lg p-4">
+                  <h4 className="font-semibold mb-3">GIS Diagnostics</h4>
+                  <div className="space-y-3 text-sm">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="bg-gray-50 dark:bg-gray-700 rounded p-3">
+                        <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">Pipeline Status</p>
+                        <p>{selectedClaim.pipelineStatus || 'Pending'}</p>
+                      </div>
+                      <div className="bg-gray-50 dark:bg-gray-700 rounded p-3">
+                        <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">Overall Score</p>
+                        <p>{selectedClaim.confidenceScores?.overall_score ?? '-'}</p>
+                      </div>
+                      <div className="bg-gray-50 dark:bg-gray-700 rounded p-3">
+                        <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">GIS Score</p>
+                        <p>{selectedClaim.confidenceScores?.gis_score ?? '-'}</p>
+                      </div>
+                      <div className="bg-gray-50 dark:bg-gray-700 rounded p-3">
+                        <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">Spatial Conflicts</p>
+                        <p>{selectedClaim.spatialConflicts?.length || 0}</p>
+                      </div>
+                      <div className="bg-gray-50 dark:bg-gray-700 rounded p-3">
+                        <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">Claimed Area (ha)</p>
+                        <p>{selectedClaim.gisDiagnostics?.claimed_area_ha ?? '-'}</p>
+                      </div>
+                      <div className="bg-gray-50 dark:bg-gray-700 rounded p-3">
+                        <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">Polygon Area (ha)</p>
+                        <p>{selectedClaim.gisDiagnostics?.polygon_area_ha ?? '-'}</p>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="bg-gray-50 dark:bg-gray-700 rounded p-3">
+                        <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">Area Discrepancy</p>
+                        <p>{selectedClaim.gisDiagnostics?.area_discrepancy_ratio ?? '-'}</p>
+                      </div>
+                      <div className="bg-gray-50 dark:bg-gray-700 rounded p-3">
+                        <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">District Boundary</p>
+                        <p>{selectedClaim.gisDiagnostics?.district_boundary_match ?? 'Not checked'}</p>
+                      </div>
+                    </div>
+
+                    <div>
+                      <h5 className="font-medium mb-2">Warnings</h5>
+                      {(selectedClaim.gisWarnings || []).length > 0 ? (
+                        <ul className="space-y-2">
+                          {selectedClaim.gisWarnings.map((warning, index) => (
+                            <li key={`${warning}-${index}`} className="bg-amber-50 text-amber-900 rounded p-3">
+                              {warning}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="text-gray-500">No GIS warnings returned.</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="border rounded-lg p-4">
+                  <h4 className="font-semibold mb-3">Review Summary</h4>
+                  <div className="space-y-3 text-sm">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="bg-gray-50 dark:bg-gray-700 rounded p-3">
+                        <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">Severity</p>
+                        <p>{selectedClaim.reviewSummary?.severity || 'pending'}</p>
+                      </div>
+                      <div className="bg-gray-50 dark:bg-gray-700 rounded p-3">
+                        <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">Recommendation</p>
+                        <p>{selectedClaim.reviewSummary?.recommendation || 'Await pipeline completion before final review.'}</p>
+                      </div>
+                    </div>
+                    <div>
+                      <h5 className="font-medium mb-2">Reasons</h5>
+                      {(selectedClaim.reviewSummary?.reasons || []).length > 0 ? (
+                        <ul className="space-y-2">
+                          {selectedClaim.reviewSummary.reasons.map((reason, index) => (
+                            <li key={`${reason}-${index}`} className="bg-gray-50 dark:bg-gray-700 rounded p-3">
+                              {reason}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="text-gray-500">No additional review reasons were generated.</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="border rounded-lg p-4">
+                  <h4 className="font-semibold mb-3">Parcel or Land Record Match</h4>
+                  {selectedClaim.parcelMatch?.best_match ? (
+                    <div className="space-y-3 text-sm">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="bg-gray-50 dark:bg-gray-700 rounded p-3">
+                          <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">Reference ID</p>
+                          <p>{selectedClaim.parcelMatch.best_match.reference_id || '-'}</p>
+                        </div>
+                        <div className="bg-gray-50 dark:bg-gray-700 rounded p-3">
+                          <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">Match Confidence</p>
+                          <p>{selectedClaim.parcelMatch.best_match.match_confidence ?? '-'}</p>
+                        </div>
+                        <div className="bg-gray-50 dark:bg-gray-700 rounded p-3">
+                          <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">Source</p>
+                          <p>{selectedClaim.parcelMatch.best_match.source_name || '-'}</p>
+                        </div>
+                        <div className="bg-gray-50 dark:bg-gray-700 rounded p-3">
+                          <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">Restricted</p>
+                          <p>{selectedClaim.parcelMatch.best_match.is_restricted ? 'Yes' : 'No'}</p>
+                        </div>
+                      </div>
+                      <div>
+                        <h5 className="font-medium mb-2">Match Basis</h5>
+                        {(selectedClaim.parcelMatch.best_match.match_basis || []).length > 0 ? (
+                          <ul className="space-y-2">
+                            {selectedClaim.parcelMatch.best_match.match_basis.map((item, index) => (
+                              <li key={`${item}-${index}`} className="bg-gray-50 dark:bg-gray-700 rounded p-3">
+                                {item}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <p className="text-gray-500">No match explanation available.</p>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-gray-500">
+                      {selectedClaim.parcelMatch?.source_available
+                        ? 'No parcel or land record match was strong enough to persist.'
+                        : 'No local parcel reference dataset is available yet.'}
+                    </p>
+                  )}
                 </div>
               </div>
 

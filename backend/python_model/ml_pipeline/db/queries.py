@@ -248,6 +248,34 @@ def save_confidence_score(claim_id: int, score: Dict[str, Any]) -> None:
         conn.commit()
 
 
+def save_land_parcel_result(claim_id: int, parcel: Dict[str, Any]) -> None:
+    with _conn() as conn:
+        conn.execute("DELETE FROM land_parcels WHERE claim_id = ?", (claim_id,))
+        best_match = (parcel or {}).get("best_match")
+        if best_match:
+            conn.execute(
+                """
+                INSERT INTO land_parcels
+                (claim_id, boundaries_geojson, area, land_cover_type, is_restricted, survey_date, reference_id, source_name, match_confidence, match_basis, metadata_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    claim_id,
+                    json.dumps(best_match.get("boundaries_geojson")) if best_match.get("boundaries_geojson") is not None else None,
+                    float(best_match.get("area_ha") or 0.0),
+                    best_match.get("land_cover_type"),
+                    1 if best_match.get("is_restricted") else 0,
+                    best_match.get("survey_date"),
+                    best_match.get("reference_id"),
+                    best_match.get("source_name"),
+                    float(best_match.get("match_confidence") or 0.0),
+                    json.dumps(best_match.get("match_basis") or []),
+                    json.dumps(parcel),
+                ),
+            )
+        conn.commit()
+
+
 def write_audit_log(claim_id: int, action: str, detail: Optional[Dict[str, Any]] = None) -> None:
     with _conn() as conn:
         conn.execute(
@@ -258,4 +286,3 @@ def write_audit_log(claim_id: int, action: str, detail: Optional[Dict[str, Any]]
             (f"ml_pipeline:{action}", claim_id, json.dumps(detail or {})),
         )
         conn.commit()
-
