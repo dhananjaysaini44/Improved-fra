@@ -5,14 +5,12 @@ python-multipart
 # OCR stack
 Pillow
 pytesseract
-opencv-python
+opencv-python-headless
 pdf2image
 numpy
 pypdf
 
 # ML pipeline
-sentence-transformers>=2.2.2
-scikit-learn>=1.3.0
-pymupdf>=1.23.0
+# Keep the deployed service on lightweight fallback embeddings.
+# Heavy optional NLP/model packages can be installed separately in richer environments.
 shapely>=2.0.0
-geojson>=3.0.0
