@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from pathlib import Path
@@ -93,6 +93,7 @@ TESSERACT_CMD = os.getenv("TESSERACT_CMD", "").strip()
 TESSERACT_LANG = os.getenv("TESSERACT_LANG", "eng").strip() or "eng"
 TESSERACT_PSM = os.getenv("TESSERACT_PSM", "6").strip() or "6"
 TESSERACT_OEM = os.getenv("TESSERACT_OEM", "3").strip() or "3"
+MODEL_API_KEY = os.getenv("MODEL_API_KEY", "").strip()
 
 _OPTIONAL_IMPORTS: Dict[str, Any] = {}
 
@@ -138,6 +139,13 @@ def convert_from_path_fn() -> Any:
 
 def pdf_reader_cls() -> Any:
     return _load_optional("pypdf", "PdfReader")
+
+
+def verify_api_key(x_api_key: Optional[str]) -> None:
+    if not MODEL_API_KEY:
+        return
+    if x_api_key != MODEL_API_KEY:
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
 
 class PipelineRequest(BaseModel):
@@ -731,7 +739,9 @@ def health() -> Dict[str, Any]:
 async def predict(
     documents: List[UploadFile] = File(default=[]),
     metadata: Optional[str] = Form(default=None),
+    x_api_key: Optional[str] = Header(default=None),
 ) -> JSONResponse:
+    verify_api_key(x_api_key)
     Image = pil_image_module()
     cv2 = cv2_module()
     np = numpy_module()
@@ -798,7 +808,8 @@ async def predict(
 
 
 @app.post("/pipeline/run")
-async def run_pipeline(req: PipelineRequest) -> JSONResponse:
+async def run_pipeline(req: PipelineRequest, x_api_key: Optional[str] = Header(default=None)) -> JSONResponse:
+    verify_api_key(x_api_key)
     try:
         if req.claim is not None:
             result = MLPipeline.run_from_payload(

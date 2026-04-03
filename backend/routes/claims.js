@@ -33,6 +33,9 @@ async function callModelAPI(files, payload) {
   form.append('metadata', JSON.stringify(payload || {}));
 
   const headers = form.getHeaders();
+  if (process.env.MODEL_API_KEY) {
+    headers['x-api-key'] = process.env.MODEL_API_KEY;
+  }
   const timeout = Number(process.env.MODEL_TIMEOUT_MS || 60000);
   const response = await axios.post(endpoint, form, { headers, timeout, maxContentLength: Infinity, maxBodyLength: Infinity });
   return response.data;
@@ -204,7 +207,12 @@ function triggerPipelineAsync(claimId, claim, modelResult, existingClaims) {
       model_result: modelResult || {},
       existing_claims: existingClaims || [],
     },
-    { timeout }
+    {
+      timeout,
+      headers: process.env.MODEL_API_KEY
+        ? { 'x-api-key': process.env.MODEL_API_KEY }
+        : undefined,
+    }
   )
     .then((resp) => {
       if (resp?.data?.status !== 'ok') {
