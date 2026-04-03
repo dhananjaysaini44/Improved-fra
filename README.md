@@ -8,9 +8,9 @@
 ![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-3-06B6D4?logo=tailwindcss&logoColor=white)
 ![Redux](https://img.shields.io/badge/Redux_Toolkit-2-764ABC?logo=redux&logoColor=white)
 ![Leaflet](https://img.shields.io/badge/Leaflet-WebGIS-199900?logo=leaflet&logoColor=white)
-![FastAPI](https://img.shields.io/badge/FastAPI-Optional_Model_Service-009688?logo=fastapi&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-Remote_OCR_Service-009688?logo=fastapi&logoColor=white)
 
-FRA Atlas and Web GIS System (Drishti) is a full-stack Forest Rights Act decision support system built for claim intake, claim tracking, admin review, GIS-based visualization, and audit visibility. The application combines a React/Vite frontend with an Express/SQLite backend and an optional Python model service for document analysis during claim submission.
+FRA Atlas and Web GIS System (Drishti) is a full-stack Forest Rights Act decision support system built for claim intake, claim tracking, admin review, GIS-based visualization, and audit visibility. The application combines a React/Vite frontend with an Express/SQLite backend and a deployed Python OCR/model service for document analysis during claim submission.
 
 ## What the project does
 
@@ -58,7 +58,7 @@ The UI is focused on the states referenced throughout the project:
 - helmet
 - cors
 
-### Optional model service
+### Python OCR/model service
 
 - FastAPI
 - Uvicorn
@@ -86,6 +86,7 @@ The UI is focused on the states referenced throughout the project:
 |   `-- store/
 |-- index.html
 |-- package.json
+|-- render.yaml
 |-- vite.config.js
 `-- README.md
 ```
@@ -118,6 +119,10 @@ Primary screens:
 - `Reports.jsx`
 - `Admin.jsx`
 - `Profile.jsx`
+
+Static asset:
+
+- `public/drishti-logo.svg` (available at `/drishti-logo.svg`)
 
 ### Backend
 
@@ -159,7 +164,7 @@ Uploaded claim documents are stored in:
 
 - Node.js 18+ recommended
 - npm
-- Python 3.10+ if you want to run the optional FastAPI model service
+- Python 3.10+ only if you want to run the OCR/model service locally instead of using the deployed endpoint
 
 ### 1. Install frontend dependencies
 
@@ -178,6 +183,17 @@ cd backend
 npm.cmd install
 ```
 
+### 2.1 Start frontend and backend together from repository root
+
+```powershell
+npm.cmd run dev:all
+```
+
+Notes:
+
+- Backend runs on `http://localhost:3000`
+- Frontend prefers `http://localhost:5000` and automatically uses the next free port if `5000` is busy
+
 ### 3. Configure backend environment
 
 Create `backend/.env` from `backend/.env.example`.
@@ -188,7 +204,7 @@ Example:
 JWT_SECRET=replace-with-a-strong-secret
 PORT=3000
 NODE_ENV=development
-MODEL_ENDPOINT=http://127.0.0.1:8000/predict
+MODEL_ENDPOINT=https://fra-ocr-service.onrender.com/predict
 MODEL_TIMEOUT_MS=60000
 ```
 
@@ -223,37 +239,32 @@ Frontend URL:
 
 The Vite dev server proxies `/api` requests to `http://localhost:3000`.
 
-## Optional Python model service
+## Deployed Python model service
 
-Claim submission can call a local model API when documents are uploaded.
+Claim submission calls a deployed OCR/model API hosted on Render.
 
-Model service file:
+Current deployed endpoints:
+
+- Predict: `https://fra-ocr-service.onrender.com/predict`
+- Health: `https://fra-ocr-service.onrender.com/health`
+
+Service location in repository:
 
 - `backend/python_model/server.py`
+- `backend/python_model/Dockerfile`
+- `backend/python_model/DEPLOYMENT.md`
+- `render.yaml`
 
-Run it with:
-
-```powershell
-cd backend/python_model
-python server.py
-```
-
-Default model endpoint:
-
-- `http://127.0.0.1:8000/predict`
-
-Health endpoint:
-
-- `http://127.0.0.1:8000/health`
-
-Current behavior of the Python service:
+What the service does now:
 
 - Accepts multiple uploaded files under `documents`
-- Accepts optional JSON metadata
-- Returns a placeholder prediction payload
-- Does not yet implement real model inference
+- Accepts JSON metadata from backend (including current claim data and existing claim candidates)
+- Performs OCR for images and PDFs (with dependency-aware fallback behavior)
+- Extracts structured FRA fields from OCR text
+- Runs duplicate detection against claim candidates supplied by the backend
+- Returns extraction confidence and duplicate-analysis output
 
-If the Python service is not running, claim creation can still proceed, but model execution will be recorded as an error in the claim record.
+The frontend does not call the Python service directly. The backend calls it server-to-server during `POST /api/claims/submit`.
 
 ## Frontend routes
 
@@ -366,7 +377,7 @@ The implemented claim flow looks like this:
 3. Supporting documents are uploaded.
 4. The backend creates the claim record in SQLite.
 5. Uploaded files are moved to a permanent claim-specific folder.
-6. The backend optionally sends documents and metadata to the local Python model service.
+6. The backend sends documents and metadata to the deployed Python OCR/model service.
 7. Model output is saved into the claim record and as `model_result.json` in the claim folder.
 8. Admin users can approve or reject claims.
 9. Claim actions are logged to `system_logs`.
@@ -405,17 +416,15 @@ Additional build/runtime notes:
 
 ## Known limitations
 
-- No single root command currently starts frontend and backend together
 - No automated test suite is configured
 - Reports are not fully implemented
 - Forgot/reset password flows are placeholders
 - Dashboard analytics are mostly static mock data
-- Python model inference is currently a stub implementation
+- OCR/model accuracy depends on document quality and installed OCR dependencies in the deployed service environment
 - Lint configuration needs to be split or adjusted for frontend and backend environments
 
 ## Suggested next improvements
 
-- Add a root-level dev script to run frontend and backend together
 - Split ESLint config for browser and Node targets
 - Replace mocked dashboard data with live API-driven metrics
 - Implement real password reset flow
@@ -430,6 +439,8 @@ Additional build/runtime notes:
 
 ```powershell
 npm.cmd run dev
+npm.cmd run dev:frontend
+npm.cmd run dev:all
 npm.cmd run build
 npm.cmd run lint
 npm.cmd run preview
@@ -441,4 +452,10 @@ npm.cmd run preview
 cd backend
 npm.cmd run dev
 npm.cmd start
+```
+
+From repository root:
+
+```powershell
+npm.cmd run dev:backend
 ```
