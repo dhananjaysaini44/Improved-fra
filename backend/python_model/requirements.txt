@@ -5,7 +5,12 @@ python-multipart
 # OCR stack
 Pillow
 pytesseract
-opencv-python
+opencv-python-headless
 pdf2image
 numpy
 pypdf
+
+# ML pipeline
+# Keep the deployed service on lightweight fallback embeddings.
+# Heavy optional NLP/model packages can be installed separately in richer environments.
+shapely>=2.0.0

@@ -15,3 +15,29 @@ services:
         value: "6"
       - key: TESSERACT_OEM
         value: "3"
+      - key: MODEL_API_KEY
+        generateValue: true
+      - key: NLP_BACKEND
+        value: fallback
+      - key: NLP_MODEL_NAME
+        value: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+      - key: NLP_MODEL_CACHE_DIR
+        value: ./models/nlp
+      - key: NLP_SIMILARITY_THRESHOLD
+        value: "0.85"
+      - key: NLP_TOP_K_COMPARISONS
+        value: "10"
+      - key: OCR_CONFIDENCE_WEIGHT
+        value: "0.30"
+      - key: NLP_CONFIDENCE_WEIGHT
+        value: "0.40"
+      - key: GIS_CONFIDENCE_WEIGHT
+        value: "0.30"
+      - key: SUSPICIOUS_SCORE_THRESHOLD
+        value: "0.60"
+      - key: PIPELINE_TIMEOUT_SECONDS
+        value: "60"
+      - key: SQLITE_DB_PATH
+        value: ./fra_atlas.db
+      - key: UPLOADS_BASE_PATH
+        value: ./uploads

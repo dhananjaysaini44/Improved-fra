@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 import io
@@ -13,36 +14,11 @@ import re
 import shutil
 import sqlite3
 import tempfile
+import importlib
 
-try:
-    from PIL import Image
-except Exception:
-    Image = None
-
-try:
-    import cv2
-except Exception:
-    cv2 = None
-
-try:
-    import numpy as np
-except Exception:
-    np = None
-
-try:
-    import pytesseract
-except Exception:
-    pytesseract = None
-
-try:
-    from pdf2image import convert_from_path
-except Exception:
-    convert_from_path = None
-
-try:
-    from pypdf import PdfReader
-except Exception:
-    PdfReader = None
+from ml_pipeline.exceptions import PipelineError
+from ml_pipeline.models.nlp_model import load_nlp_model
+from ml_pipeline.pipeline import MLPipeline
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -117,9 +93,72 @@ TESSERACT_CMD = os.getenv("TESSERACT_CMD", "").strip()
 TESSERACT_LANG = os.getenv("TESSERACT_LANG", "eng").strip() or "eng"
 TESSERACT_PSM = os.getenv("TESSERACT_PSM", "6").strip() or "6"
 TESSERACT_OEM = os.getenv("TESSERACT_OEM", "3").strip() or "3"
+MODEL_API_KEY = os.getenv("MODEL_API_KEY", "").strip()
 
-if pytesseract is not None and TESSERACT_CMD:
-    pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
+_OPTIONAL_IMPORTS: Dict[str, Any] = {}
+
+
+def _load_optional(module_name: str, attr: Optional[str] = None) -> Any:
+    key = f"{module_name}:{attr or ''}"
+    if key in _OPTIONAL_IMPORTS:
+        return _OPTIONAL_IMPORTS[key]
+    try:
+        module = importlib.import_module(module_name)
+        value = getattr(module, attr) if attr else module
+    except Exception:
+        value = None
+    _OPTIONAL_IMPORTS[key] = value
+    return value
+
+
+def pil_image_module() -> Any:
+    return _load_optional("PIL.Image")
+
+
+def cv2_module() -> Any:
+    return _load_optional("cv2")
+
+
+def numpy_module() -> Any:
+    return _load_optional("numpy")
+
+
+def pytesseract_module() -> Any:
+    module = _load_optional("pytesseract")
+    if module is not None and TESSERACT_CMD:
+        try:
+            module.pytesseract.tesseract_cmd = TESSERACT_CMD
+        except Exception:
+            pass
+    return module
+
+
+def convert_from_path_fn() -> Any:
+    return _load_optional("pdf2image", "convert_from_path")
+
+
+def pdf_reader_cls() -> Any:
+    return _load_optional("pypdf", "PdfReader")
+
+
+def verify_api_key(x_api_key: Optional[str]) -> None:
+    if not MODEL_API_KEY:
+        return
+    if x_api_key != MODEL_API_KEY:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+class PipelineRequest(BaseModel):
+    claim_id: Optional[int] = None
+    claim: Optional[Dict[str, Any]] = None
+    existing_claims: Optional[List[Dict[str, Any]]] = None
+    model_result: Optional[Dict[str, Any]] = None
+
+
+@app.on_event("startup")
+async def startup_event() -> None:
+    # Preload embedding backend. Falls back gracefully if transformer model isn't available.
+    load_nlp_model()
 
 
 def utc_now_iso() -> str:
@@ -164,6 +203,7 @@ def try_decode_bytes(payload: bytes) -> str:
 
 
 def tesseract_runtime_available() -> bool:
+    pytesseract = pytesseract_module()
     if pytesseract is None:
         return False
     explicit = getattr(pytesseract.pytesseract, "tesseract_cmd", "") or ""
@@ -186,6 +226,7 @@ def extract_pdf_text_fallback(payload: bytes) -> str:
 
 
 def extract_pdf_text_with_reader(payload: bytes) -> str:
+    PdfReader = pdf_reader_cls()
     if PdfReader is None:
         return ""
     try:
@@ -201,6 +242,9 @@ def extract_pdf_text_with_reader(payload: bytes) -> str:
 
 
 def preprocess_image_bytes(payload: bytes) -> Optional["np.ndarray"]:
+    Image = pil_image_module()
+    cv2 = cv2_module()
+    np = numpy_module()
     if Image is None or cv2 is None or np is None:
         return None
     try:
@@ -224,6 +268,10 @@ def preprocess_image_bytes(payload: bytes) -> Optional["np.ndarray"]:
 
 
 def run_ocr_on_image(payload: bytes) -> Tuple[str, Dict[str, Any]]:
+    Image = pil_image_module()
+    cv2 = cv2_module()
+    np = numpy_module()
+    pytesseract = pytesseract_module()
     dependency_status = {
         "pillow": Image is not None,
         "opencv": cv2 is not None,
@@ -267,6 +315,12 @@ def run_ocr_on_image(payload: bytes) -> Tuple[str, Dict[str, Any]]:
 
 
 def run_ocr_on_pdf(payload: bytes) -> Tuple[str, Dict[str, Any]]:
+    PdfReader = pdf_reader_cls()
+    convert_from_path = convert_from_path_fn()
+    Image = pil_image_module()
+    cv2 = cv2_module()
+    np = numpy_module()
+    pytesseract = pytesseract_module()
     embedded_text = extract_pdf_text_with_reader(payload)
     if embedded_text:
         return embedded_text, {
@@ -653,6 +707,12 @@ def estimate_extraction_confidence(extracted_fields: Dict[str, Any], duplicate_a
 
 @app.get("/health")
 def health() -> Dict[str, Any]:
+    Image = pil_image_module()
+    cv2 = cv2_module()
+    np = numpy_module()
+    pytesseract = pytesseract_module()
+    convert_from_path = convert_from_path_fn()
+    PdfReader = pdf_reader_cls()
     return {
         "status": "ok",
         "time": utc_now_iso(),
@@ -679,7 +739,15 @@ def health() -> Dict[str, Any]:
 async def predict(
     documents: List[UploadFile] = File(default=[]),
     metadata: Optional[str] = Form(default=None),
+    x_api_key: Optional[str] = Header(default=None),
 ) -> JSONResponse:
+    verify_api_key(x_api_key)
+    Image = pil_image_module()
+    cv2 = cv2_module()
+    np = numpy_module()
+    pytesseract = pytesseract_module()
+    convert_from_path = convert_from_path_fn()
+    PdfReader = pdf_reader_cls()
     parsed_metadata = {}
     if metadata:
         try:
@@ -737,6 +805,40 @@ async def predict(
         pass
 
     return JSONResponse(content=result)
+
+
+@app.post("/pipeline/run")
+async def run_pipeline(req: PipelineRequest, x_api_key: Optional[str] = Header(default=None)) -> JSONResponse:
+    verify_api_key(x_api_key)
+    try:
+        if req.claim is not None:
+            result = MLPipeline.run_from_payload(
+                {
+                    "claim": req.claim,
+                    "existing_claims": req.existing_claims or [],
+                    "model_result": req.model_result or {},
+                }
+            )
+            return JSONResponse(content={"status": "ok", "mode": "payload", "claim_id": req.claim_id, "result": result})
+
+        if req.claim_id is None:
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "claim_id is required when claim payload is not provided"},
+            )
+
+        result = MLPipeline.run(req.claim_id)
+        return JSONResponse(content={"status": "ok", "mode": "db", "claim_id": req.claim_id, "result": result})
+    except PipelineError as exc:
+        return JSONResponse(
+            status_code=422,
+            content={"status": "error", "stage": exc.stage, "message": str(exc), "claim_id": req.claim_id},
+        )
+    except Exception as exc:
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": str(exc), "claim_id": req.claim_id},
+        )
 
 
 if __name__ == "__main__":
