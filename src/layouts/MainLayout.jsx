@@ -1,6 +1,6 @@
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
-import { Home, Map, FileText, List, AlertTriangle, BarChart3, Settings, User, LogOut, Bell, Moon, Sun, Menu, X } from 'lucide-react';
+import { Home, Map, FileText, List, AlertTriangle, BarChart3, Settings, User, LogOut, Bell, Moon, Sun, Menu, X, Download } from 'lucide-react';
 import { logout } from '../store/slices/authSlice';
 import { useState, useEffect, useRef } from 'react';
 
@@ -13,6 +13,7 @@ const MainLayout = () => {
   const [darkMode, setDarkMode] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [showNotificationsModal, setShowNotificationsModal] = useState(false);
+  const [deferredPrompt, setDeferredPrompt] = useState(null);
   
   // Notifications state
   const [notifications, setNotifications] = useState([
@@ -56,6 +57,32 @@ const MainLayout = () => {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  // Listen for PWA install prompt
+  useEffect(() => {
+    const handleBeforeInstallPrompt = (e) => {
+      // Prevent Chrome 67 and earlier from automatically showing the prompt
+      e.preventDefault();
+      // Stash the event so it can be triggered later.
+      setDeferredPrompt(e);
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    };
+  }, []);
+
+  const handleInstallClick = async () => {
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      if (outcome === 'accepted') {
+        setDeferredPrompt(null);
+      }
+    }
+  };
 
   const navigation = [
     { name: 'Dashboard', href: '/dashboard', icon: Home },
@@ -188,6 +215,22 @@ const MainLayout = () => {
             </div>
 
             <div className="flex items-center space-x-4">
+              {/* Install PWA Button */}
+              {deferredPrompt && (
+                <button
+                  onClick={handleInstallClick}
+                  className={`flex items-center px-3 py-1.5 text-sm font-medium rounded-md transition-colors border ${
+                    darkMode 
+                      ? 'border-green-500 text-green-400 hover:bg-green-900/30' 
+                      : 'border-green-600 text-green-700 hover:bg-green-50'
+                  }`}
+                  title="Install App"
+                >
+                  <Download className="h-4 w-4 mr-1.5" />
+                  <span className="hidden sm:inline">Install App</span>
+                </button>
+              )}
+
               {/* Dark Mode Toggle */}
               <button
                 onClick={toggleDarkMode}

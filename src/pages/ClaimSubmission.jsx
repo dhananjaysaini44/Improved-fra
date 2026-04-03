@@ -4,10 +4,12 @@ import { useNavigate } from 'react-router-dom';
 import { useDispatch } from 'react-redux';
 import { MapContainer, TileLayer, FeatureGroup } from 'react-leaflet';
 import { EditControl } from 'react-leaflet-draw';
-import { FileText, MapPin, Upload, CheckCircle, ArrowLeft, ArrowRight } from 'lucide-react';
+import { FileText, MapPin, Upload, CheckCircle, ArrowLeft, ArrowRight, Save } from 'lucide-react';
 import 'leaflet/dist/leaflet.css';
 import 'leaflet-draw/dist/leaflet.draw.css';
 import { submitClaimWithDocs } from '../store/slices/claimsSlice';
+import { saveOfflineClaim, syncOfflineClaims } from '../services/offlineSync';
+import { useEffect } from 'react';
 
 const ClaimSubmission = () => {
   const [step, setStep] = useState(1);
@@ -24,20 +26,48 @@ const ClaimSubmission = () => {
     { id: 4, title: 'Review & Submit', icon: CheckCircle }
   ];
 
+  // Auto-sync offline claims when network returns
+  useEffect(() => {
+    const handleOnline = () => {
+      syncOfflineClaims(dispatch, submitClaimWithDocs);
+    };
+    window.addEventListener('online', handleOnline);
+    // Attempt sync on mount if online
+    if (navigator.onLine) {
+      handleOnline();
+    }
+    return () => window.removeEventListener('online', handleOnline);
+  }, [dispatch]);
+
   const onSubmit = async (data) => {
     // Safety guard: only allow actual submission on the final Review step
     if (step !== 4) {
       return;
     }
+
+    const payload = {
+      claimantName: data.claimantName,
+      village: data.village,
+      state: data.state,
+      district: data.district,
+      polygon: polygonData,
+      files: uploadedFiles,
+    };
+
+    if (!navigator.onLine) {
+      try {
+        await saveOfflineClaim(payload);
+        alert('You are offline. Claim saved locally. Will sync when online.');
+        navigate('/map');
+      } catch (e) {
+        console.error('Failed to save offline:', e);
+        alert('Failed to save claim offline.');
+      }
+      return;
+    }
+
     try {
-      const created = await dispatch(submitClaimWithDocs({
-        claimantName: data.claimantName,
-        village: data.village,
-        state: data.state,
-        district: data.district,
-        polygon: polygonData,
-        files: uploadedFiles,
-      })).unwrap();
+      const created = await dispatch(submitClaimWithDocs(payload)).unwrap();
       // Navigate to map focused on this claim
       navigate(`/map?claim=${created.id}`);
     } catch (e) {
