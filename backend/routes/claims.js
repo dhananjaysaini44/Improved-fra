@@ -5,6 +5,7 @@ const router = express.Router();
 const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 const axios = require('axios');
 const FormData = require('form-data');
 
@@ -37,6 +38,188 @@ async function callModelAPI(files, payload) {
   return response.data;
 }
 
+function uniqueTargetPath(dirPath, originalName) {
+  const parsed = path.parse(originalName || 'document');
+  const safeBase = (parsed.name || 'document').replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').trim() || 'document';
+  const safeExt = parsed.ext || '';
+  let candidate = path.join(dirPath, `${safeBase}${safeExt}`);
+  let counter = 1;
+  while (fs.existsSync(candidate)) {
+    candidate = path.join(dirPath, `${safeBase}-${counter}${safeExt}`);
+    counter += 1;
+  }
+  return candidate;
+}
+
+function bundleDocumentsIfNeeded(claimDir, filePaths) {
+  if (!Array.isArray(filePaths) || filePaths.length <= 1) {
+    return filePaths || [];
+  }
+
+  const archivePath = path.join(claimDir, 'documents_bundle.tar.gz');
+  const archiveName = path.basename(archivePath);
+  const entryNames = filePaths.map((filePath) => path.basename(filePath));
+
+  execFileSync('tar', ['-czf', archivePath, '-C', claimDir, ...entryNames], {
+    cwd: claimDir,
+    stdio: 'ignore',
+  });
+
+  for (const filePath of filePaths) {
+    try {
+      fs.unlinkSync(filePath);
+    } catch (err) {
+      // Leave partially bundled files in place rather than failing the whole claim.
+    }
+  }
+
+  return [archivePath];
+}
+
+function safeJson(value, fallback) {
+  try {
+    return JSON.stringify(value ?? fallback);
+  } catch (err) {
+    return JSON.stringify(fallback);
+  }
+}
+
+function persistPipelineResult(claimId, pipelineResult) {
+  if (!claimId || !pipelineResult || typeof pipelineResult !== 'object') return;
+
+  const status = String(pipelineResult.pipeline_status || 'PIPELINE_ERROR');
+  const validation = pipelineResult.validation || {};
+  const nlp = pipelineResult.nlp || {};
+  const gis = pipelineResult.gis || {};
+  const score = pipelineResult.score || {};
+
+  const tx = db.transaction(() => {
+    db.prepare(`
+      UPDATE claims
+      SET pipeline_status = ?
+      WHERE id = ?
+    `).run(status, claimId);
+
+    db.prepare(`
+      INSERT INTO nlp_results (claim_id, similarity_score, is_duplicate, flagged_reason, top_matching_claim)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(claim_id) DO UPDATE SET
+        similarity_score = excluded.similarity_score,
+        is_duplicate = excluded.is_duplicate,
+        flagged_reason = excluded.flagged_reason,
+        top_matching_claim = excluded.top_matching_claim,
+        processed_at = CURRENT_TIMESTAMP
+    `).run(
+      claimId,
+      Number(nlp.similarity_score || 0),
+      nlp.is_duplicate ? 1 : 0,
+      nlp.flagged_reason || null,
+      nlp.top_matching_claim_id || null
+    );
+
+    db.prepare(`
+      INSERT INTO confidence_scores (claim_id, ocr_score, nlp_score, gis_score, overall_score, is_suspicious)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(claim_id) DO UPDATE SET
+        ocr_score = excluded.ocr_score,
+        nlp_score = excluded.nlp_score,
+        gis_score = excluded.gis_score,
+        overall_score = excluded.overall_score,
+        is_suspicious = excluded.is_suspicious,
+        computed_at = CURRENT_TIMESTAMP
+    `).run(
+      claimId,
+      Number(score.ocr_score || 0),
+      Number(score.nlp_score || 0),
+      Number(score.gis_score || 0),
+      Number(score.overall_score || 0),
+      score.is_suspicious ? 1 : 0
+    );
+
+    db.prepare('DELETE FROM spatial_conflicts WHERE claim_id = ?').run(claimId);
+    for (const conflict of Array.isArray(gis.conflicts) ? gis.conflicts : []) {
+      db.prepare(`
+        INSERT INTO spatial_conflicts (claim_id, conflicting_claim_id, overlap_area, conflict_type, is_resolved)
+        VALUES (?, ?, ?, ?, 0)
+      `).run(
+        claimId,
+        conflict.conflicting_claim_id || null,
+        Number(conflict.overlap_area || 0),
+        conflict.conflict_type || 'PENDING_CLAIM'
+      );
+    }
+
+    db.prepare(`
+      INSERT INTO system_logs (action, user_id, entity_type, entity_id, details)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(
+      'ml_pipeline:completed',
+      null,
+      'claim',
+      claimId,
+      safeJson({
+        pipeline_status: status,
+        validation,
+        nlp,
+        gis,
+        score,
+      }, {})
+    );
+  });
+
+  tx();
+}
+
+function persistPipelineError(claimId, errorMessage) {
+  if (!claimId) return;
+  const tx = db.transaction(() => {
+    db.prepare('UPDATE claims SET pipeline_status = ? WHERE id = ?').run('PIPELINE_ERROR', claimId);
+    db.prepare(`
+      INSERT INTO system_logs (action, user_id, entity_type, entity_id, details)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(
+      'ml_pipeline:error',
+      null,
+      'claim',
+      claimId,
+      safeJson({ error: errorMessage }, {})
+    );
+  });
+  tx();
+}
+
+function triggerPipelineAsync(claimId, claim, modelResult, existingClaims) {
+  const modelEndpoint = process.env.MODEL_ENDPOINT || '';
+  if (!modelEndpoint) return;
+  const pipelineEndpoint = modelEndpoint.includes('/predict')
+    ? modelEndpoint.replace('/predict', '/pipeline/run')
+    : `${modelEndpoint.replace(/\/$/, '')}/pipeline/run`;
+  const timeout = Number(process.env.MODEL_TIMEOUT_MS || 60000);
+
+  axios.post(
+    pipelineEndpoint,
+    {
+      claim_id: claimId,
+      claim: claim || null,
+      model_result: modelResult || {},
+      existing_claims: existingClaims || [],
+    },
+    { timeout }
+  )
+    .then((resp) => {
+      if (resp?.data?.status !== 'ok') {
+        console.warn(`[Pipeline] claim ${claimId} returned non-ok status`);
+        persistPipelineError(claimId, resp?.data?.message || 'Pipeline returned non-ok status');
+        return;
+      }
+      persistPipelineResult(claimId, resp?.data?.result || {});
+    })
+    .catch((err) => {
+      console.warn(`[Pipeline] claim ${claimId} trigger failed: ${err.message}`);
+      persistPipelineError(claimId, err.message);
+    });
+}
+
 function buildModelCandidates(currentClaimId) {
   const rows = db.prepare(`
     SELECT id, claimant_name, village, district, state, status, model_result, created_at
@@ -51,6 +234,7 @@ function buildModelCandidates(currentClaimId) {
     village: row.village,
     district: row.district,
     state: row.state,
+    polygon: row.polygon,
     status: row.status,
     model_result: row.model_result,
     created_at: row.created_at,
@@ -398,16 +582,12 @@ router.post('/submit', upload.array('documents'), async (req, res) => {
     const uploaded = req.files || [];
     const savedPaths = [];
     for (const f of uploaded) {
-      const targetPath = path.join(claimDir, f.originalname);
+      const targetPath = uniqueTargetPath(claimDir, f.originalname);
       fs.renameSync(f.path, targetPath);
       savedPaths.push(targetPath);
     }
 
-    // 3) Update claim with document paths (relative to backend directory for portability)
-    const relativePaths = savedPaths.map(p => path.relative(path.join(__dirname, '..'), p));
-    db.prepare('UPDATE claims SET documents = ? WHERE id = ?').run(JSON.stringify(relativePaths), claimId);
-
-    // 4) Call local Python model API
+    // 3) Call Python model API using the original uploaded files before optional bundling.
     let modelResult = null;
     let modelStatus = 'not_run';
     try {
@@ -425,6 +605,11 @@ router.post('/submit', upload.array('documents'), async (req, res) => {
       modelResult = { error: err.message };
     }
 
+    // 4) Bundle multiple uploaded files into a single archive for long-term storage.
+    const storedPaths = bundleDocumentsIfNeeded(claimDir, savedPaths);
+    const relativePaths = storedPaths.map(p => path.relative(path.join(__dirname, '..'), p));
+    db.prepare('UPDATE claims SET documents = ? WHERE id = ?').run(JSON.stringify(relativePaths), claimId);
+
     // 5) Save model result to disk and DB
     const resultFile = path.join(claimDir, 'model_result.json');
     try { fs.writeFileSync(resultFile, JSON.stringify(modelResult, null, 2)); } catch (e) {}
@@ -432,6 +617,9 @@ router.post('/submit', upload.array('documents'), async (req, res) => {
       .run(JSON.stringify(modelResult), modelStatus, claimId);
 
     const newClaim = db.prepare('SELECT * FROM claims WHERE id = ?').get(claimId);
+
+    // Non-blocking post-submit pipeline run. Do not await or fail submit on pipeline errors.
+    triggerPipelineAsync(claimId, newClaim, modelResult, buildModelCandidates(claimId));
 
     return res.status(201).json(newClaim);
   } catch (error) {

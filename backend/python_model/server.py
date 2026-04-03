@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 import io
@@ -13,6 +14,10 @@ import re
 import shutil
 import sqlite3
 import tempfile
+
+from ml_pipeline.exceptions import PipelineError
+from ml_pipeline.models.nlp_model import load_nlp_model
+from ml_pipeline.pipeline import MLPipeline
 
 try:
     from PIL import Image
@@ -120,6 +125,19 @@ TESSERACT_OEM = os.getenv("TESSERACT_OEM", "3").strip() or "3"
 
 if pytesseract is not None and TESSERACT_CMD:
     pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
+
+
+class PipelineRequest(BaseModel):
+    claim_id: Optional[int] = None
+    claim: Optional[Dict[str, Any]] = None
+    existing_claims: Optional[List[Dict[str, Any]]] = None
+    model_result: Optional[Dict[str, Any]] = None
+
+
+@app.on_event("startup")
+async def startup_event() -> None:
+    # Preload embedding backend. Falls back gracefully if transformer model isn't available.
+    load_nlp_model()
 
 
 def utc_now_iso() -> str:
@@ -737,6 +755,39 @@ async def predict(
         pass
 
     return JSONResponse(content=result)
+
+
+@app.post("/pipeline/run")
+async def run_pipeline(req: PipelineRequest) -> JSONResponse:
+    try:
+        if req.claim is not None:
+            result = MLPipeline.run_from_payload(
+                {
+                    "claim": req.claim,
+                    "existing_claims": req.existing_claims or [],
+                    "model_result": req.model_result or {},
+                }
+            )
+            return JSONResponse(content={"status": "ok", "mode": "payload", "claim_id": req.claim_id, "result": result})
+
+        if req.claim_id is None:
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "claim_id is required when claim payload is not provided"},
+            )
+
+        result = MLPipeline.run(req.claim_id)
+        return JSONResponse(content={"status": "ok", "mode": "db", "claim_id": req.claim_id, "result": result})
+    except PipelineError as exc:
+        return JSONResponse(
+            status_code=422,
+            content={"status": "error", "stage": exc.stage, "message": str(exc), "claim_id": req.claim_id},
+        )
+    except Exception as exc:
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": str(exc), "claim_id": req.claim_id},
+        )
 
 
 if __name__ == "__main__":
