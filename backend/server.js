@@ -84,7 +84,72 @@ try { db.exec("ALTER TABLE claims ADD COLUMN rejection_reason TEXT"); } catch (e
 try { db.exec("ALTER TABLE claims ADD COLUMN model_result TEXT"); } catch (e) {}
 try { db.exec("ALTER TABLE claims ADD COLUMN model_status TEXT"); } catch (e) {}
 try { db.exec("ALTER TABLE claims ADD COLUMN model_run_at DATETIME"); } catch (e) {}
+try { db.exec("ALTER TABLE claims ADD COLUMN pipeline_status TEXT DEFAULT 'PENDING'"); } catch (e) {}
+try { db.exec("ALTER TABLE claims ADD COLUMN nlp_embedding TEXT"); } catch (e) {}
 try { db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_gram_panchayat_unique ON users(gram_panchayat_id)"); } catch (e) {}
+
+// Pipeline tables (additive, safe if rerun)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS ocr_results (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    claim_id INTEGER NOT NULL,
+    doc_filename TEXT NOT NULL,
+    extracted_text TEXT,
+    structured_json TEXT,
+    accuracy REAL,
+    fields_complete_ratio REAL,
+    processed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (claim_id) REFERENCES claims(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS nlp_results (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    claim_id INTEGER NOT NULL UNIQUE,
+    similarity_score REAL NOT NULL DEFAULT 0.0,
+    is_duplicate INTEGER NOT NULL DEFAULT 0,
+    flagged_reason TEXT,
+    top_matching_claim INTEGER,
+    processed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (claim_id) REFERENCES claims(id) ON DELETE CASCADE,
+    FOREIGN KEY (top_matching_claim) REFERENCES claims(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS spatial_conflicts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    claim_id INTEGER NOT NULL,
+    conflicting_claim_id INTEGER,
+    overlap_area REAL,
+    conflict_type TEXT,
+    is_resolved INTEGER DEFAULT 0,
+    detected_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (claim_id) REFERENCES claims(id) ON DELETE CASCADE,
+    FOREIGN KEY (conflicting_claim_id) REFERENCES claims(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS confidence_scores (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    claim_id INTEGER NOT NULL UNIQUE,
+    ocr_score REAL NOT NULL,
+    nlp_score REAL NOT NULL,
+    gis_score REAL NOT NULL,
+    overall_score REAL NOT NULL,
+    is_suspicious INTEGER NOT NULL DEFAULT 0,
+    computed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (claim_id) REFERENCES claims(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS land_parcels (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    claim_id INTEGER,
+    boundaries_geojson TEXT,
+    area REAL,
+    land_cover_type TEXT,
+    is_restricted INTEGER DEFAULT 0,
+    survey_date DATE,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (claim_id) REFERENCES claims(id) ON DELETE SET NULL
+  );
+`);
 
 // Routes
 app.use('/api/auth', require('./routes/auth'));
