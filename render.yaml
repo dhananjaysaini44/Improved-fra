@@ -15,6 +15,14 @@ services:
         value: "6"
       - key: TESSERACT_OEM
         value: "3"
+      - key: TESSERACT_TIMEOUT_SEC
+        value: "20"
+      - key: PDF_OCR_MAX_PAGES
+        value: "2"
+      - key: PDF_OCR_DPI
+        value: "140"
+      - key: OCR_MAX_IMAGE_SIDE
+        value: "1800"
       - key: MODEL_API_KEY
         generateValue: true
       - key: NLP_BACKEND

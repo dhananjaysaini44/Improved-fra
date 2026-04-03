@@ -31,6 +31,10 @@ const ClaimTracking = () => {
   };
 
   const pipelineLabel = (claim) => {
+    const status = String(claim.pipelineStatus || '').toUpperCase();
+    if (status.includes('ERROR')) {
+      return { text: 'Error', className: 'bg-red-100 text-red-800' };
+    }
     if ((claim.spatialConflicts || []).length > 0) {
       return { text: `${claim.spatialConflicts.length} spatial conflict(s)`, className: 'bg-red-100 text-red-800' };
     }

@@ -36,4 +36,16 @@ Required backend env var:
 ```env
 MODEL_ENDPOINT=https://your-service.onrender.com/predict
 MODEL_TIMEOUT_MS=120000
+MODEL_MAX_RETRIES=2
+MODEL_RETRY_DELAY_MS=1500
+CLAIM_DUPLICATE_WINDOW_SECONDS=120
+```
+
+Recommended OCR-service env vars (Render):
+
+```env
+TESSERACT_TIMEOUT_SEC=20
+PDF_OCR_MAX_PAGES=2
+PDF_OCR_DPI=140
+OCR_MAX_IMAGE_SIDE=1800
 ```

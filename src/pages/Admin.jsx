@@ -338,11 +338,11 @@ const Admin = () => {
       )}
 
       <div className="mb-8">
-        <div className="flex justify-between items-center">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Admin Panel</h1>
           <button
             onClick={() => setIsAddModalOpen(true)}
-            className="bg-blue-500 text-white px-4 py-2 rounded-md hover:bg-blue-600 flex items-center"
+            className="w-full sm:w-auto bg-blue-500 text-white px-4 py-2 rounded-md hover:bg-blue-600 flex items-center justify-center"
           >
             <Plus className="h-4 w-4 mr-2" />
             Add User
@@ -352,14 +352,14 @@ const Admin = () => {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <div className="space-y-8">
-          <div className="bg-white p-6 rounded shadow">
+          <div className="bg-white p-6 rounded shadow overflow-hidden">
             <h2 className="text-xl font-semibold mb-4">Claim Moderation</h2>
-            <div className="mb-4 flex items-center justify-between">
+            <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-sm text-gray-600">Review and decide on pending claims</p>
-              <button onClick={refreshPendingClaims} className="text-sm px-3 py-1 bg-gray-100 rounded hover:bg-gray-200">Refresh</button>
+              <button onClick={refreshPendingClaims} className="w-full sm:w-auto text-sm px-3 py-1 bg-gray-100 rounded hover:bg-gray-200">Refresh</button>
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full">
+              <table className="w-full min-w-[860px] text-sm">
                 <thead>
                   <tr className="bg-gray-50">
                     <th className="p-2 text-left">ID</th>
@@ -388,7 +388,7 @@ const Admin = () => {
                         <td className="p-2">{c.state || '-'}</td>
                         <td className="p-2">
                           <div className="flex items-center gap-2">
-                            <span className={`px-2 py-1 rounded text-xs font-medium ${getDuplicateSeverity(c).className}`}>
+                            <span className={`px-2 py-1 rounded text-xs font-medium whitespace-nowrap ${getDuplicateSeverity(c).className}`}>
                               {getDuplicateSeverity(c).label}
                             </span>
                             {c.duplicateAnalysis && (
@@ -404,14 +404,16 @@ const Admin = () => {
                           </div>
                         </td>
                         <td className="p-2">
-                          <span className={`px-2 py-1 rounded text-xs font-medium ${getPipelineSeverity(c).className}`}>
+                          <span className={`px-2 py-1 rounded text-xs font-medium whitespace-nowrap ${getPipelineSeverity(c).className}`}>
                             {getPipelineSeverity(c).label}
                           </span>
                         </td>
-                        <td className="p-2">{c.submissionDate || '-'}</td>
-                        <td className="p-2 space-x-2">
-                          <button onClick={() => handleApproveClaim(c.id)} className="px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700">Approve</button>
-                          <button onClick={() => handleRejectClaim(c.id)} className="px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700">Reject</button>
+                        <td className="p-2 whitespace-nowrap">{c.submissionDate || '-'}</td>
+                        <td className="p-2">
+                          <div className="flex flex-col sm:flex-row gap-2">
+                            <button onClick={() => handleApproveClaim(c.id)} className="px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700 whitespace-nowrap">Approve</button>
+                            <button onClick={() => handleRejectClaim(c.id)} className="px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700 whitespace-nowrap">Reject</button>
+                          </div>
                         </td>
                       </tr>
                     ))
@@ -421,9 +423,10 @@ const Admin = () => {
             </div>
           </div>
 
-          <div className="bg-white p-6 rounded shadow">
+          <div className="bg-white p-6 rounded shadow overflow-hidden">
             <h2 className="text-xl font-semibold mb-4">User Management</h2>
-            <table className="w-full">
+            <div className="overflow-x-auto">
+            <table className="w-full min-w-[640px] text-sm">
             <thead>
               <tr className="bg-gray-50">
                 <th className="p-2 text-left">Name</th>
@@ -467,12 +470,13 @@ const Admin = () => {
             </tbody>
           </table>
           </div>
+          </div>
         </div>
 
-        <div className="bg-white p-6 rounded shadow">
-          <div className="flex justify-between items-center mb-4">
+        <div className="bg-white p-6 rounded shadow overflow-hidden">
+          <div className="flex flex-col gap-2 sm:flex-row sm:justify-between sm:items-center mb-4">
             <h2 className="text-xl font-semibold">System Logs</h2>
-            <div className="space-x-2">
+            <div className="flex flex-col sm:flex-row gap-2">
               <button onClick={fetchLogs} className="text-sm px-3 py-1 bg-gray-100 rounded hover:bg-gray-200">Refresh</button>
               <button onClick={clearLogs} className="text-sm px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700">Clear Logs</button>
             </div>
@@ -508,7 +512,7 @@ const Admin = () => {
       {/* Edit User Modal */}
       {isEditModalOpen && editingUser && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[12000]">
-          <div className="bg-white dark:bg-gray-800 dark:text-white p-6 rounded-lg w-96">
+          <div className="bg-white dark:bg-gray-800 dark:text-white p-6 rounded-lg w-full max-w-[calc(100vw-2rem)] sm:max-w-md mx-4">
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Edit User</h3>
               <button
@@ -582,7 +586,7 @@ const Admin = () => {
 
       {selectedClaim && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[12000]">
-          <div className="bg-white dark:bg-gray-800 dark:text-white p-6 rounded-lg w-full max-w-4xl max-h-[85vh] overflow-y-auto">
+          <div className="bg-white dark:bg-gray-800 dark:text-white p-6 rounded-lg w-full max-w-4xl mx-4 max-h-[85vh] overflow-y-auto">
             <div className="flex justify-between items-start mb-4">
               <div>
                 <h3 className="text-lg font-semibold text-gray-900 dark:text-white">OCR and Duplicate Review</h3>
@@ -815,7 +819,7 @@ const Admin = () => {
       {/* Add User Modal */}
       {isAddModalOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[12000]">
-          <div className="bg-white dark:bg-gray-800 dark:text-white p-6 rounded-lg w-96">
+          <div className="bg-white dark:bg-gray-800 dark:text-white p-6 rounded-lg w-full max-w-[calc(100vw-2rem)] sm:max-w-md mx-4">
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Add New User</h3>
               <button
@@ -969,7 +973,7 @@ const Admin = () => {
       {/* Reject Claim Modal */}
       {isRejectModalOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[12000]">
-          <div className="bg-white dark:bg-gray-800 dark:text-white p-6 rounded-lg w-96 shadow-lg">
+          <div className="bg-white dark:bg-gray-800 dark:text-white p-6 rounded-lg w-full max-w-[calc(100vw-2rem)] sm:max-w-md mx-4 shadow-lg">
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Reject Claim #{rejectClaimId}</h3>
               <button

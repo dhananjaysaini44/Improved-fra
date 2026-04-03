@@ -142,6 +142,10 @@ TESSERACT_CMD = os.getenv("TESSERACT_CMD", "").strip()
 TESSERACT_LANG = os.getenv("TESSERACT_LANG", "eng").strip() or "eng"
 TESSERACT_PSM = os.getenv("TESSERACT_PSM", "6").strip() or "6"
 TESSERACT_OEM = os.getenv("TESSERACT_OEM", "3").strip() or "3"
+TESSERACT_TIMEOUT_SEC = float(os.getenv("TESSERACT_TIMEOUT_SEC", "20").strip() or "20")
+PDF_OCR_MAX_PAGES = int(os.getenv("PDF_OCR_MAX_PAGES", "2").strip() or "2")
+PDF_OCR_DPI = int(os.getenv("PDF_OCR_DPI", "140").strip() or "140")
+OCR_MAX_IMAGE_SIDE = int(os.getenv("OCR_MAX_IMAGE_SIDE", "1800").strip() or "1800")
 MODEL_API_KEY = os.getenv("MODEL_API_KEY", "").strip()
 
 _OPTIONAL_IMPORTS: Dict[str, Any] = {}
@@ -298,6 +302,14 @@ def preprocess_image_bytes(payload: bytes) -> Optional["np.ndarray"]:
         return None
     try:
         image = Image.open(io.BytesIO(payload)).convert("RGB")
+        max_side = max(1, OCR_MAX_IMAGE_SIDE)
+        if max(image.size) > max_side:
+            scale = max_side / float(max(image.size))
+            new_size = (
+                max(1, int(image.size[0] * scale)),
+                max(1, int(image.size[1] * scale)),
+            )
+            image = image.resize(new_size)
         image_np = np.array(image)
         gray = cv2.cvtColor(image_np, cv2.COLOR_RGB2GRAY)
         denoised = cv2.fastNlMeansDenoising(gray)
@@ -349,6 +361,7 @@ def run_ocr_on_image(payload: bytes) -> Tuple[str, Dict[str, Any]]:
             image,
             lang=TESSERACT_LANG,
             config=build_tesseract_config(),
+            timeout=TESSERACT_TIMEOUT_SEC,
         )
         return sanitize_text(text), {
             "method": "tesseract_image",
@@ -404,21 +417,37 @@ def run_ocr_on_pdf(payload: bytes) -> Tuple[str, Dict[str, Any]]:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_pdf = Path(temp_dir) / "input.pdf"
             temp_pdf.write_bytes(payload)
-            images = convert_from_path(str(temp_pdf))
+            max_pages = max(1, PDF_OCR_MAX_PAGES)
+            images = convert_from_path(
+                str(temp_pdf),
+                dpi=max(72, PDF_OCR_DPI),
+                first_page=1,
+                last_page=max_pages,
+                fmt="png",
+                thread_count=1,
+            )
             extracted_pages = []
-            for image in images:
+            for page_index, image in enumerate(images):
                 img_bytes = io.BytesIO()
                 image.save(img_bytes, format="PNG")
                 page_text, _ = run_ocr_on_image(img_bytes.getvalue())
                 if page_text:
                     extracted_pages.append(page_text)
+                # Early stop once we have enough high-signal text for field extraction.
+                combined = "\n".join(extracted_pages)
+                if page_index >= 0 and len(combined) > 350 and (
+                    re.search(r"Survey(?: No| Number)?\s*[:#\-]?", combined, flags=re.IGNORECASE)
+                    or re.search(r"Khata(?: No| Number)?\s*[:#\-]?", combined, flags=re.IGNORECASE)
+                    or re.search(r"(?:hectare|ha\b)", combined, flags=re.IGNORECASE)
+                ):
+                    break
             text = "\n".join(extracted_pages)
             if not text:
                 text = extract_pdf_text_fallback(payload)
             return sanitize_text(text), {
                 "method": "tesseract_pdf",
                 "dependency_status": dependency_status,
-                "message": "OCR completed on PDF content.",
+                "message": f"OCR completed on PDF content (up to {max_pages} page(s) at {max(72, PDF_OCR_DPI)} DPI).",
             }
     except Exception as exc:
         fallback_text = extract_pdf_text_fallback(payload)

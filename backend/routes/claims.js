@@ -26,22 +26,87 @@ const upload = multer({ dest: tempDir });
 // Call local Python model API with given files and payload
 async function callModelAPI(files, payload) {
   const endpoint = process.env.MODEL_ENDPOINT || 'http://127.0.0.1:8000/predict';
-  const form = new FormData();
-  // append files under field name 'documents'
-  files.forEach((filePath) => {
-    const stream = fs.createReadStream(filePath);
-    form.append('documents', stream, path.basename(filePath));
-  });
-  // include optional payload as JSON string
-  form.append('metadata', JSON.stringify(payload || {}));
+  const timeout = Number(process.env.MODEL_TIMEOUT_MS || 180000);
+  const maxRetries = Number(process.env.MODEL_MAX_RETRIES || 2);
+  const retryDelayMs = Number(process.env.MODEL_RETRY_DELAY_MS || 1500);
 
-  const headers = form.getHeaders();
-  if (process.env.MODEL_API_KEY) {
-    headers['x-api-key'] = process.env.MODEL_API_KEY;
+  const shouldRetry = (err) => {
+    if (!err) return false;
+    if (err.code === 'ECONNABORTED') return true;
+    if (String(err.message || '').toLowerCase().includes('timeout')) return true;
+    const status = err.response?.status;
+    return status === 429 || (typeof status === 'number' && status >= 500);
+  };
+
+  let lastError = null;
+  for (let attempt = 1; attempt <= maxRetries + 1; attempt += 1) {
+    const form = new FormData();
+    files.forEach((filePath) => {
+      const stream = fs.createReadStream(filePath);
+      form.append('documents', stream, path.basename(filePath));
+    });
+    form.append('metadata', JSON.stringify(payload || {}));
+
+    const headers = form.getHeaders();
+    if (process.env.MODEL_API_KEY) {
+      headers['x-api-key'] = process.env.MODEL_API_KEY;
+    }
+
+    try {
+      const response = await axios.post(endpoint, form, {
+        headers,
+        timeout,
+        maxContentLength: Infinity,
+        maxBodyLength: Infinity,
+      });
+      return response.data;
+    } catch (err) {
+      lastError = err;
+      if (attempt > maxRetries || !shouldRetry(err)) {
+        throw err;
+      }
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs * attempt));
+    }
   }
-  const timeout = Number(process.env.MODEL_TIMEOUT_MS || 60000);
-  const response = await axios.post(endpoint, form, { headers, timeout, maxContentLength: Infinity, maxBodyLength: Infinity });
-  return response.data;
+
+  throw lastError || new Error('Model API call failed');
+}
+
+function cleanupTempUploads(files) {
+  for (const f of files || []) {
+    if (!f?.path) continue;
+    try {
+      if (fs.existsSync(f.path)) fs.unlinkSync(f.path);
+    } catch (err) {
+      // best-effort temp cleanup
+    }
+  }
+}
+
+function findRecentDuplicateSubmission({ claimant_name, village, state, district, polygon, user_id, windowSeconds }) {
+  const seconds = Number(windowSeconds || 120);
+  const windowExpr = `-${Math.max(1, seconds)} seconds`;
+  return db.prepare(`
+    SELECT *
+    FROM claims
+    WHERE claimant_name = ?
+      AND village = ?
+      AND state = ?
+      AND district = ?
+      AND IFNULL(polygon, '[]') = IFNULL(?, '[]')
+      AND IFNULL(CAST(user_id AS TEXT), '') = IFNULL(CAST(? AS TEXT), '')
+      AND created_at >= datetime('now', ?)
+    ORDER BY id DESC
+    LIMIT 1
+  `).get(
+    claimant_name,
+    village,
+    state,
+    district,
+    polygon || '[]',
+    user_id || null,
+    windowExpr
+  );
 }
 
 function uniqueTargetPath(dirPath, originalName) {
@@ -870,12 +935,32 @@ router.post('/submit', upload.array('documents'), async (req, res) => {
       return res.status(400).json({ message: 'Missing required fields' });
     }
 
+    const polygonStr = polygon ? polygon : '[]';
+    const duplicateWindowSeconds = Number(process.env.CLAIM_DUPLICATE_WINDOW_SECONDS || 120);
+    const recentDuplicate = findRecentDuplicateSubmission({
+      claimant_name,
+      village,
+      state,
+      district,
+      polygon: polygonStr,
+      user_id,
+      windowSeconds: duplicateWindowSeconds,
+    });
+
+    if (recentDuplicate) {
+      cleanupTempUploads(req.files || []);
+      return res.status(200).json({
+        ...mergeClaimReadModel(recentDuplicate),
+        duplicate_submission_blocked: true,
+        message: `Duplicate submit blocked: an identical claim was created within the last ${duplicateWindowSeconds} seconds.`,
+      });
+    }
+
     // 1) Create claim record first (without documents yet)
     const insert = db.prepare(`
       INSERT INTO claims (claimant_name, village, state, district, polygon, documents, user_id)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
-    const polygonStr = polygon ? polygon : '[]';
     const info = insert.run(
       claimant_name,
       village,
@@ -930,12 +1015,17 @@ router.post('/submit', upload.array('documents'), async (req, res) => {
 
     const newClaim = db.prepare('SELECT * FROM claims WHERE id = ?').get(claimId);
 
-    // Non-blocking post-submit pipeline run. Do not await or fail submit on pipeline errors.
-    triggerPipelineAsync(claimId, newClaim, modelResult, buildModelCandidates(claimId));
+    // Non-blocking post-submit pipeline run. Skip when OCR/model call failed.
+    if (modelStatus === 'success') {
+      triggerPipelineAsync(claimId, newClaim, modelResult, buildModelCandidates(claimId));
+    } else {
+      persistPipelineError(claimId, `Skipped pipeline because model_status=${modelStatus}: ${modelResult?.error || 'unknown error'}`);
+    }
 
     return res.status(201).json(newClaim);
   } catch (error) {
     console.error('Error submitting claim with documents:', error);
+    cleanupTempUploads(req.files || []);
     return res.status(500).json({ message: 'Error submitting claim', error: error.message });
   }
 });
