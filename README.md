@@ -110,15 +110,10 @@ The UI is focused on the states referenced throughout the project:
 |   |-- pages/
 |   |-- services/
 |   `-- store/
-|-- agent-rules.md
-|-- context.md
 |-- eslint.config.js
 |-- index.html
 |-- package.json
-|-- project.md
 |-- render.yaml
-|-- tasks.md
-|-- todo.md
 |-- vite.config.js
 `-- README.md
 ```
