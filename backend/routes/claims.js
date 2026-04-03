@@ -8,6 +8,9 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const axios = require('axios');
 const FormData = require('form-data');
+const { generateHash } = require('../utils/hash');
+const { anchorToAlgorand } = require('../services/algorand');
+
 
 // Ensure uploads directory exists
 const UPLOADS_ROOT = path.join(__dirname, '..', 'uploads');
@@ -518,25 +521,43 @@ router.get('/stats/district-distribution', (req, res, next) => {
 
 
 // Approve claim (explicit endpoint)
-router.post('/:id/approve', authenticateToken, requireAdmin, (req, res) => {
+router.post('/:id/approve', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const { actor_user_id } = req.body;
     const upd = db.prepare('UPDATE claims SET status = ? WHERE id = ?').run('approved', id);
     if (upd.changes === 0) return res.status(404).json({ message: 'Claim not found' });
     const claim = db.prepare('SELECT * FROM claims WHERE id = ?').get(id);
+    
+    // Algorand Shadow Blockchain Logic
+    const payload = { ...claim, action: 'approved', action_actor: actor_user_id };
+    const local_hash = generateHash(payload);
+    let algorand_tx_id = null;
+    
+    try {
+      algorand_tx_id = await anchorToAlgorand(local_hash);
+    } catch (algorandError) {
+      console.error('Algorand anchoring failed, continuing gracefully...', algorandError);
+    }
+
+    // Insert into local audit ledger
+    db.prepare(`INSERT INTO audit_ledger (claim_id, action, admin_id, local_hash, algorand_tx_id, timestamp) VALUES (?, ?, ?, ?, ?, datetime('now', 'localtime'))`)
+      .run(id, 'approved', actor_user_id || null, local_hash, algorand_tx_id);
+
     try {
       db.prepare(`INSERT INTO system_logs (action, user_id, entity_type, entity_id, details) VALUES (?, ?, ?, ?, ?)`)
-        .run('claim_approved', actor_user_id || null, 'claim', id, JSON.stringify({ status: 'approved' }));
+        .run('claim_approved', actor_user_id || null, 'claim', id, JSON.stringify({ status: 'approved', algorand_tx: algorand_tx_id }));
     } catch (e) {}
+    
     res.json(claim);
   } catch (error) {
     res.status(500).json({ message: 'Error approving claim', error: error.message });
   }
 });
 
+
 // Reject claim (explicit endpoint)
-router.post('/:id/reject', authenticateToken, requireAdmin, (req, res) => {
+router.post('/:id/reject', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const { actor_user_id, reason } = req.body;
@@ -547,10 +568,27 @@ router.post('/:id/reject', authenticateToken, requireAdmin, (req, res) => {
     const upd = db.prepare('UPDATE claims SET status = ?, rejection_reason = ? WHERE id = ?').run('rejected', trimmed, id);
     if (upd.changes === 0) return res.status(404).json({ message: 'Claim not found' });
     const claim = db.prepare('SELECT * FROM claims WHERE id = ?').get(id);
+    
+    // Algorand Shadow Blockchain Logic
+    const payload = { ...claim, action: 'rejected', reason: trimmed, action_actor: actor_user_id };
+    const local_hash = generateHash(payload);
+    let algorand_tx_id = null;
+    
+    try {
+      algorand_tx_id = await anchorToAlgorand(local_hash);
+    } catch (algorandError) {
+      console.error('Algorand anchoring failed, continuing gracefully...', algorandError);
+    }
+
+    // Insert into local audit ledger
+    db.prepare(`INSERT INTO audit_ledger (claim_id, action, admin_id, local_hash, algorand_tx_id, timestamp) VALUES (?, ?, ?, ?, ?, datetime('now', 'localtime'))`)
+      .run(id, 'rejected', actor_user_id || null, local_hash, algorand_tx_id);
+
     try {
       db.prepare(`INSERT INTO system_logs (action, user_id, entity_type, entity_id, details) VALUES (?, ?, ?, ?, ?)`)
-        .run('claim_rejected', actor_user_id || null, 'claim', id, JSON.stringify({ status: 'rejected', reason: trimmed }));
+        .run('claim_rejected', actor_user_id || null, 'claim', id, JSON.stringify({ status: 'rejected', reason: trimmed, algorand_tx: algorand_tx_id }));
     } catch (e) {}
+    
     res.json(claim);
   } catch (error) {
     res.status(500).json({ message: 'Error rejecting claim', error: error.message });

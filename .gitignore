@@ -43,6 +43,15 @@ replit.md
 context.md
 agent-rules.md
 tasks.md
+
+# Debug and temporary files
+backend/*.txt
+backend/*.json
+!backend/package.json
+!backend/package-lock.json
+
+# Git integration
+.antigravity/
 ml_pipeline_reconciled.md
 algorand_integration.md
 project.md

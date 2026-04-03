@@ -16,6 +16,9 @@ const Admin = () => {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState(null);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [isRejectModalOpen, setIsRejectModalOpen] = useState(false);
+  const [rejectClaimId, setRejectClaimId] = useState(null);
+  const [rejectReason, setRejectReason] = useState('');
   const [selectedClaim, setSelectedClaim] = useState(null);
   const [notification, setNotification] = useState(null);
   const pendingClaims = claims.filter((claim) => String(claim.status || '').toLowerCase() === 'pending');
@@ -129,17 +132,23 @@ const Admin = () => {
     }
   };
 
-  const handleRejectClaim = async (id) => {
+  const handleRejectClaim = (id) => {
+    setRejectClaimId(id);
+    setRejectReason('');
+    setIsRejectModalOpen(true);
+  };
+
+  const confirmRejectClaim = async () => {
+    if (!rejectReason || !rejectReason.trim()) {
+      showNotification('Rejection reason is required', 'error');
+      return;
+    }
     try {
-      let reason = '';
-      while (true) {
-        reason = window.prompt('Enter rejection reason (mandatory):', reason || '') || '';
-        if (reason && reason.trim()) break;
-        const retry = window.confirm('Rejection reason is required. Do you want to try again?');
-        if (!retry) return; // Abort rejection if user cancels
-      }
-      await dispatch(rejectClaim({ id, reason: reason.trim() })).unwrap();
-      showNotification(`Claim #${id} rejected`);
+      await dispatch(rejectClaim({ id: rejectClaimId, reason: rejectReason.trim() })).unwrap();
+      showNotification(`Claim #${rejectClaimId} rejected`);
+      setIsRejectModalOpen(false);
+      setRejectClaimId(null);
+      setRejectReason('');
     } catch (error) {
       console.error('Error rejecting claim:', error);
       const message = error?.response?.data?.message || error.message || 'Failed to reject claim';
@@ -800,6 +809,50 @@ const Admin = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Reject Claim Modal */}
+      {isRejectModalOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[12000]">
+          <div className="bg-white dark:bg-gray-800 dark:text-white p-6 rounded-lg w-96 shadow-lg">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Reject Claim #{rejectClaimId}</h3>
+              <button
+                onClick={() => setIsRejectModalOpen(false)}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-1">Rejection Reason <span className="text-red-500">*</span></label>
+                <textarea
+                  value={rejectReason}
+                  onChange={(e) => setRejectReason(e.target.value)}
+                  placeholder="Enter the mandatory reason for rejection..."
+                  className="w-full border rounded-md px-3 py-2 text-gray-900 focus:ring-red-500 focus:border-red-500"
+                  rows={4}
+                  required
+                />
+              </div>
+            </div>
+            <div className="flex justify-end space-x-2 mt-6">
+              <button
+                onClick={() => setIsRejectModalOpen(false)}
+                className="px-4 py-2 text-gray-600 hover:text-gray-800 focus:outline-none"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmRejectClaim}
+                className="bg-red-500 text-white px-4 py-2 rounded-md hover:bg-red-600 flex items-center focus:outline-none"
+              >
+                Reject Claim
+              </button>
+            </div>
           </div>
         </div>
       )}
