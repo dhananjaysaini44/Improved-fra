@@ -412,13 +412,17 @@ router.delete('/:id', (req, res) => {
 });
 
 // Get claim statistics
-router.get('/stats/summary', (req, res) => {
+router.get('/stats/summary', (req, res, next) => {
+  console.log('DEBUG: /stats/summary hit');
   try {
-    const totalClaims = db.prepare('SELECT COUNT(*) as count FROM claims').get().count;
-    const pendingClaims = db.prepare('SELECT COUNT(*) as count FROM claims WHERE status = "pending"').get().count;
-    const approvedClaims = db.prepare('SELECT COUNT(*) as count FROM claims WHERE status = "approved"').get().count;
-    const rejectedClaims = db.prepare('SELECT COUNT(*) as count FROM claims WHERE status = "rejected"').get().count;
-    
+    const totalStmt = db.prepare('SELECT COUNT(*) as count FROM claims').get();
+    const totalClaims = totalStmt ? totalStmt.count : 0;
+    const pendingStmt = db.prepare('SELECT COUNT(*) as count FROM claims WHERE status = ?').get('pending');
+    const pendingClaims = pendingStmt ? pendingStmt.count : 0;
+    const approvedStmt = db.prepare('SELECT COUNT(*) as count FROM claims WHERE status = ?').get('approved');
+    const approvedClaims = approvedStmt ? approvedStmt.count : 0;
+    const rejectedStmt = db.prepare('SELECT COUNT(*) as count FROM claims WHERE status = ?').get('rejected');
+    const rejectedClaims = rejectedStmt ? rejectedStmt.count : 0;
     res.json({
       total: totalClaims,
       pending: pendingClaims,
@@ -426,9 +430,84 @@ router.get('/stats/summary', (req, res) => {
       rejected: rejectedClaims
     });
   } catch (error) {
-    res.status(500).json({ message: 'Error fetching statistics', error: error.message });
+    console.error('DEBUG: stats/summary error:', error);
+    next(error);
   }
 });
+
+// Get monthly trends for the last 6 months
+router.get('/stats/trends', (req, res, next) => {
+  try {
+    const months = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date();
+      d.setMonth(d.getMonth() - i);
+      months.push(d.toISOString().slice(0, 7));
+    }
+
+    const trends = months.map(month => {
+      const claimsStmt = db.prepare("SELECT COUNT(*) as count FROM claims WHERE strftime('%Y-%m', created_at) = ?").get(month);
+      const claims = claimsStmt ? claimsStmt.count : 0;
+      const approvedStmt = db.prepare("SELECT COUNT(*) as count FROM claims WHERE strftime('%Y-%m', created_at) = ? AND status = 'approved'").get(month);
+      const approved = approvedStmt ? approvedStmt.count : 0;
+      const date = new Date(month + '-01');
+      const monthLabel = date.toLocaleString('default', { month: 'short' });
+      return { month: monthLabel, claims, approved };
+    });
+
+    res.json(trends);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Get claim distribution by state
+router.get('/stats/state-distribution', (req, res, next) => {
+  try {
+    const distribution = db.prepare(`
+      SELECT state as name, COUNT(*) as value 
+      FROM claims 
+      GROUP BY state
+    `).all();
+
+    const stateColors = {
+      'Madhya Pradesh': '#3B82F6',
+      'Odisha': '#10B981',
+      'Telangana': '#F59E0B',
+      'Tripura': '#EF4444'
+    };
+
+    const result = distribution.map(item => ({
+      ...item,
+      color: stateColors[item.name] || '#6366F1'
+    }));
+
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Get claim distribution by district (top 15)
+router.get('/stats/district-distribution', (req, res, next) => {
+  try {
+    const distribution = db.prepare(`
+      SELECT district as name, COUNT(*) as value,
+        SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved,
+        SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected,
+        SUM(CASE WHEN status = 'pending'  THEN 1 ELSE 0 END) as pending
+      FROM claims
+      WHERE district IS NOT NULL AND district != ''
+      GROUP BY district
+      ORDER BY value DESC
+      LIMIT 15
+    `).all();
+    res.json(distribution);
+  } catch (error) {
+    next(error);
+  }
+});
+
 
 // Approve claim (explicit endpoint)
 router.post('/:id/approve', authenticateToken, requireAdmin, (req, res) => {
