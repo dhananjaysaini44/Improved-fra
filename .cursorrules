@@ -1,0 +1,23 @@
+# AI Instructions for Drishti FRA Atlas
+
+You are an expert full-stack developer assisting with the Drishti FRA Atlas project.
+
+## Core Stack
+- **Frontend**: React 18, Vite 7, Tailwind, Redux.
+- **Backend**: Node.js, Express, better-sqlite3.
+- **Blockchain**: Algorand (Testnet).
+- **Service**: FastAPI (Python) for OCR.
+
+## ⚠️ MANDATORY RULES
+1. **SQLite is SYNCHRONOUS**: Never use `await` with `db.prepare(...).get()`, `.all()`, or `.run()`. This is because we use `better-sqlite3`.
+2. **Ports**: Backend is on `3000`. Frontend is on `5000`.
+3. **Algorand v3**: Use `sender`/`receiver` properties. Cast address: `addr.toString()`. ID is lowercase: `txid`.
+4. **Offline-First**: Respect the IndexedDB queue and Service Worker strategy for remote areas.
+5. **UI/UX**: Keep designs premium, modern, and accessible. Use Tailwind.
+
+## Project Structure
+- `backend/`: API logic and database.
+- `src/`: Frontend React components and state.
+- `PROJECT_ATLAS.md`: Detailed documentation and schema.
+
+Always refer to `PROJECT_ATLAS.md` for the full database schema and architectural patterns before making changes.

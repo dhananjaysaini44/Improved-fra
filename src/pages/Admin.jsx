@@ -20,6 +20,8 @@ const Admin = () => {
   const [rejectClaimId, setRejectClaimId] = useState(null);
   const [rejectReason, setRejectReason] = useState('');
   const [selectedClaim, setSelectedClaim] = useState(null);
+  const [khasraVerifyData, setKhasraVerifyData] = useState(null);
+  const [isVerifying, setIsVerifying] = useState(false);
   const [notification, setNotification] = useState(null);
   const pendingClaims = claims.filter((claim) => String(claim.status || '').toLowerCase() === 'pending');
 
@@ -159,6 +161,38 @@ const Admin = () => {
   const showNotification = (message, type = 'success') => {
     setNotification({ message, type });
     setTimeout(() => setNotification(null), 3000);
+  };
+
+  const handleFetchKhasraVerify = async (id) => {
+    try {
+      const resp = await authService.api.get(`/admin/claims/${id}/khasra-verify`);
+      setKhasraVerifyData(resp.data);
+    } catch (error) {
+      console.error('Error fetching Khasra verification:', error);
+    }
+  };
+
+  useEffect(() => {
+    if (selectedClaim?.id) {
+      handleFetchKhasraVerify(selectedClaim.id);
+    } else {
+      setKhasraVerifyData(null);
+    }
+  }, [selectedClaim]);
+
+  const handleTogglePatwariVerify = async () => {
+    if (!selectedClaim) return;
+    try {
+      setIsVerifying(true);
+      const newVal = !selectedClaim.patwari_verified;
+      await authService.api.patch(`/admin/claims/${selectedClaim.id}`, { patwari_verified: newVal });
+      setSelectedClaim({ ...selectedClaim, patwari_verified: newVal });
+      showNotification(`Patwari verification updated to ${newVal ? 'Verified' : 'Unverified'}`);
+    } catch (error) {
+      showNotification('Failed to update verification', 'error');
+    } finally {
+      setIsVerifying(false);
+    }
   };
 
   const handleEditUser = (user) => {
@@ -629,6 +663,60 @@ const Admin = () => {
                   ) : (
                     <p className="text-sm text-gray-500">No OCR/duplicate analysis found for this claim.</p>
                   )}
+                </div>
+
+                <div className="border rounded-lg p-4 bg-blue-50 dark:bg-blue-900/20 border-blue-200">
+                  <h4 className="font-bold mb-3 flex items-center">
+                    <Shield className="h-5 w-5 mr-2 text-blue-600" />
+                    Land Record Verification
+                  </h4>
+                  <div className="space-y-3 text-sm">
+                    <div className="grid grid-cols-2 gap-2">
+                       <div>
+                         <p className="text-xs text-gray-500 uppercase font-bold">Khasra No</p>
+                         <p className="font-mono text-lg">{selectedClaim.khasra_no || 'N/A'}</p>
+                       </div>
+                       <div>
+                         <p className="text-xs text-gray-500 uppercase font-bold">Village/Dist</p>
+                         <p>{selectedClaim.village || 'N/A'} / {selectedClaim.district || 'N/A'}</p>
+                       </div>
+                    </div>
+                    
+                    {selectedClaim.khasra_no && (
+                      <div className="pt-2 flex flex-col space-y-2">
+                        <a 
+                          href={khasraVerifyData?.portalUrl} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="w-full text-center py-2 bg-blue-600 text-white rounded font-bold hover:bg-blue-700 transition-colors"
+                        >
+                          Verify on State Portal
+                        </a>
+                        
+                        <label className="flex items-center justify-between p-2 bg-white dark:bg-gray-700 rounded border cursor-pointer">
+                          <span className="font-semibold text-gray-700 dark:text-gray-200">Patwari Verified</span>
+                          <input 
+                            type="checkbox" 
+                            checked={!!selectedClaim.patwari_verified}
+                            onChange={handleTogglePatwariVerify}
+                            disabled={isVerifying}
+                            className="h-5 w-5 rounded text-blue-600 focus:ring-blue-500"
+                          />
+                        </label>
+                      </div>
+                    )}
+
+                    {/* Conflict Warning */}
+                    {claims.some(c => c.id !== selectedClaim.id && c.khasra_no === selectedClaim.khasra_no && c.khasra_no !== null && c.status !== 'rejected') && (
+                      <div className="mt-2 p-3 bg-red-100 text-red-800 rounded border border-red-300 flex items-start">
+                        <AlertTriangle className="h-5 w-5 mr-2 flex-shrink-0" />
+                        <div>
+                          <p className="font-bold">Khasra Conflict</p>
+                          <p className="text-xs">Another active claim exists for this Khasra number.</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 <div className="border rounded-lg p-4">

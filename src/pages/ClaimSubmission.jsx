@@ -2,22 +2,49 @@ import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { useNavigate } from 'react-router-dom';
 import { useDispatch } from 'react-redux';
-import { MapContainer, TileLayer, FeatureGroup } from 'react-leaflet';
+import { MapContainer, TileLayer, FeatureGroup, GeoJSON, useMap, LayersControl } from 'react-leaflet';
+const { BaseLayer } = LayersControl;
 import { EditControl } from 'react-leaflet-draw';
 import { FileText, MapPin, Upload, CheckCircle, ArrowLeft, ArrowRight, Save } from 'lucide-react';
 import 'leaflet/dist/leaflet.css';
 import 'leaflet-draw/dist/leaflet.draw.css';
+import L from 'leaflet';
 import { submitClaimWithDocs } from '../store/slices/claimsSlice';
 import { saveOfflineClaim, syncOfflineClaims } from '../services/offlineSync';
 import { useEffect } from 'react';
+import LocationSelector from '../components/ClaimWizard/LocationSelector';
+import KhasraLayer from '../components/Map/KhasraLayer';
+import KhasraSelectionPanel from '../components/ClaimWizard/KhasraSelectionPanel';
+import geoService from '../services/geoService';
+import { useSelector } from 'react-redux';
+import { setLocation } from '../store/slices/locationSlice';
+import GPSWalkBoundary from '../components/Map/GPSWalkBoundary';
+
+// Internal component to handle map centering
+const MapRefocuser = ({ bounds }) => {
+  const map = useMap();
+  useEffect(() => {
+    if (bounds) {
+      map.fitBounds(bounds, { padding: [50, 50] });
+    }
+  }, [bounds, map]);
+  return null;
+};
 
 const ClaimSubmission = () => {
   const [step, setStep] = useState(1);
   const [uploadedFiles, setUploadedFiles] = useState([]);
   const [polygonData, setPolygonData] = useState(null);
   const { register, handleSubmit, watch, formState: { errors } } = useForm();
+  const watchData = watch();
   const navigate = useNavigate();
   const dispatch = useDispatch();
+  const { selectedState, selectedDistrict, selectedTehsil, selectedVillage, villageCode } = useSelector(state => state.location);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  
+  // Local state for Khasra selection
+  const [selectedKhasra, setSelectedKhasra] = useState(null);
+  const [khasraStatus, setKhasraStatus] = useState(null);
 
   const steps = [
     { id: 1, title: 'Basic Information', icon: FileText },
@@ -41,16 +68,24 @@ const ClaimSubmission = () => {
 
   const onSubmit = async (data) => {
     // Safety guard: only allow actual submission on the final Review step
-    if (step !== 4) {
+    if (step !== 4 || isSubmitting) {
       return;
     }
 
+    setIsSubmitting(true);
+
     const payload = {
-      claimantName: data.claimantName,
-      village: data.village,
-      state: data.state,
-      district: data.district,
-      polygon: polygonData,
+      claimant_name: data.claimantName,
+      village: selectedVillage?.name || '',
+      state: selectedState?.name || '',
+      district: selectedDistrict?.name || '',
+      khasra_no: selectedKhasra?.khasraNo || '',
+      khata_no: data.khata_no || selectedKhasra?.khataNo || '',
+      village_code: villageCode || '',
+      tehsil_code: selectedTehsil?.code || '',
+      patwari_name: data.patwari_name || '',
+      land_area_hectares: selectedKhasra?.areaHectares || data.landArea || 0,
+      polygon: selectedKhasra?.geometry || polygonData || [],
       files: uploadedFiles,
     };
 
@@ -73,10 +108,20 @@ const ClaimSubmission = () => {
     } catch (e) {
       console.error('Failed to submit claim:', e);
       alert(e.message || 'Failed to submit claim');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   const nextStep = () => {
+    if (step === 1 && !villageCode) {
+      alert('Please select a state, district, tehsil, and village before proceeding.');
+      return;
+    }
+    if (step === 2 && !selectedKhasra && !polygonData) {
+      alert('Please identify the land by selecting a Khasra from the map, performing a GPS walk, or drawing manually.');
+      return;
+    }
     if (step < 4) setStep(step + 1);
   };
 
@@ -93,6 +138,23 @@ const ClaimSubmission = () => {
     const layer = e.layer;
     const geoJson = layer.toGeoJSON();
     setPolygonData(geoJson);
+    setSelectedKhasra(null); // Clear Khasra if user draws manually
+  };
+
+  const handleGPSWalkComplete = (geoJson) => {
+    setPolygonData(geoJson);
+    setSelectedKhasra(null);
+  };
+
+  const handleKhasraSelect = async (plot) => {
+    setSelectedKhasra(plot);
+    setPolygonData(null); // Clear manual polygon if Khasra selected
+    try {
+      const status = await geoService.checkKhasra(plot.khasraNo, villageCode);
+      setKhasraStatus(status);
+    } catch (err) {
+      console.error("Status check failed", err);
+    }
   };
 
   const watchedValues = watch();
@@ -160,59 +222,8 @@ const ClaimSubmission = () => {
                   />
                 </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Village Name *
-                  </label>
-                  <input
-                    {...register('village', { required: 'Village name is required' })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                    placeholder="Enter village name"
-                  />
-                  {errors.village && (
-                    <p className="mt-1 text-sm text-red-600">{errors.village.message}</p>
-                  )}
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Gram Panchayat
-                  </label>
-                  <input
-                    {...register('gramPanchayat')}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                    placeholder="Enter gram panchayat"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    State *
-                  </label>
-                  <select
-                    {...register('state', { required: 'State selection is required' })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                  >
-                    <option value="">Select State</option>
-                    <option value="MP">Madhya Pradesh</option>
-                    <option value="TR">Tripura</option>
-                    <option value="OD">Odisha</option>
-                    <option value="TL">Telangana</option>
-                  </select>
-                  {errors.state && (
-                    <p className="mt-1 text-sm text-red-600">{errors.state.message}</p>
-                  )}
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    District
-                  </label>
-                  <input
-                    {...register('district')}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                    placeholder="Enter district"
-                  />
+                <div className="col-span-full">
+                  <LocationSelector />
                 </div>
 
                 <div>
@@ -258,12 +269,36 @@ const ClaimSubmission = () => {
                 </p>
               </div>
 
-              <div className="h-96 w-full border border-gray-300 rounded-lg overflow-hidden">
-                <MapContainer center={[20.5937, 78.9629]} zoom={5} style={{ height: '100%', width: '100%' }}>
-                  <TileLayer
-                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                    attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                  />
+              <div className="h-96 w-full border border-gray-300 rounded-lg overflow-hidden relative">
+                <MapContainer 
+                  center={[22.9734, 78.6569]} 
+                  zoom={5} 
+                  style={{ height: '100%', width: '100%' }}
+                >
+                  <LayersControl position="topright">
+                    <BaseLayer checked name="Streets">
+                      <TileLayer
+                        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                      />
+                    </BaseLayer>
+                    <BaseLayer name="Satellite">
+                      <TileLayer
+                        attribution='Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EBP, and the GIS User Community'
+                        url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+                      />
+                    </BaseLayer>
+                  </LayersControl>
+
+                  {villageCode && (
+                    <KhasraLayer 
+                      villageCode={villageCode} 
+                      stateCode={selectedState?.code}
+                      onKhasraSelect={handleKhasraSelect}
+                      selectedKhasraNo={selectedKhasra?.khasraNo}
+                    />
+                  )}
+                  <GPSWalkBoundary onComplete={handleGPSWalkComplete} />
                   <FeatureGroup>
                     <EditControl
                       position="topright"
@@ -277,8 +312,35 @@ const ClaimSubmission = () => {
                       }}
                     />
                   </FeatureGroup>
+                  {polygonData && (
+                    <GeoJSON 
+                      data={polygonData} 
+                      style={{ color: '#10b981', weight: 3, fillOpacity: 0.3 }}
+                      onEachFeature={(feature, layer) => {
+                        layer.on('mousemove', (e) => {
+                          const { lat, lng } = e.latlng;
+                          layer.bindTooltip(`Lat: ${lat.toFixed(6)}<br/>Lng: ${lng.toFixed(6)}`, {
+                            sticky: true,
+                            className: 'custom-tooltip'
+                          }).openTooltip();
+                        });
+                      }}
+                    />
+                  )}
+                  {polygonData && (
+                    <MapRefocuser 
+                      bounds={L.geoJSON(polygonData).getBounds()} 
+                    />
+                  )}
                 </MapContainer>
               </div>
+
+              <KhasraSelectionPanel 
+                selectedKhasra={selectedKhasra}
+                statusInfo={khasraStatus}
+                onConfirm={() => nextStep()}
+                onReset={() => setSelectedKhasra(null)}
+              />
 
               {polygonData && (
                 <div className="bg-green-50 border border-green-200 rounded-md p-4">
@@ -298,6 +360,36 @@ const ClaimSubmission = () => {
                 <p className="text-gray-600 dark:text-gray-300 mb-4">
                   Upload relevant documents to support your claim (PDF, images, etc.)
                 </p>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Patwari Name *</label>
+                    <input 
+                      {...register('patwari_name', { required: 'Patwari name is required' })}
+                      className="w-full px-3 py-2 border rounded-md"
+                      placeholder="Enter name"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Khata/Khatauni No</label>
+                    <input 
+                      {...register('khata_no')}
+                      className="w-full px-3 py-2 border rounded-md"
+                      placeholder="Optional"
+                    />
+                  </div>
+                  <div className="col-span-full">
+                    <label className="flex items-center space-x-2 text-sm text-gray-700">
+                      <input 
+                        type="checkbox" 
+                        {...register('verified', { required: 'You must confirm record verification' })}
+                        className="rounded text-green-600" 
+                      />
+                      <span>I confirm this land is correctly identified based on Patwari records.</span>
+                    </label>
+                    {errors.verified && <p className="text-xs text-red-500 mt-1">{errors.verified.message}</p>}
+                  </div>
+                </div>
               </div>
 
               <div className="border-2 border-dashed border-gray-300 rounded-lg p-6">
@@ -306,7 +398,7 @@ const ClaimSubmission = () => {
                   <div className="mt-4">
                     <label htmlFor="file-upload" className="cursor-pointer">
                       <span className="mt-2 block text-sm font-medium text-gray-900">
-                        Upload files
+                        Khasra Nakal / Patwari Copy
                       </span>
                       <input
                         id="file-upload"
@@ -355,11 +447,12 @@ const ClaimSubmission = () => {
                 <div className="space-y-4">
                   <h4 className="font-medium text-gray-900 dark:text-white">Basic Information</h4>
                   <div className="bg-gray-50 p-4 rounded-lg space-y-2">
-                    <div><strong>Name:</strong> {watchedValues.claimantName || 'Not provided'}</div>
-                    <div><strong>Village:</strong> {watchedValues.village || 'Not provided'}</div>
-                    <div><strong>State:</strong> {watchedValues.state || 'Not provided'}</div>
-                    <div><strong>District:</strong> {watchedValues.district || 'Not provided'}</div>
-                    <div><strong>Land Area:</strong> {watchedValues.landArea ? `${watchedValues.landArea} ha` : 'Not provided'}</div>
+                    <div><strong>Name:</strong> {watchData.claimantName || 'Not provided'}</div>
+                    <div><strong>State:</strong> {selectedState?.name || 'Not selected'}</div>
+                    <div><strong>District:</strong> {selectedDistrict?.name || 'Not selected'}</div>
+                    <div><strong>Tehsil:</strong> {selectedTehsil?.name || 'Not selected'}</div>
+                    <div><strong>Village:</strong> {selectedVillage?.name || 'Not selected'}</div>
+                    <div><strong>Land Area:</strong> {(selectedKhasra?.areaHectares || watchData.landArea) ? `${selectedKhasra?.areaHectares || watchData.landArea} ha` : 'Not provided'}</div>
                   </div>
                 </div>
 
@@ -367,9 +460,23 @@ const ClaimSubmission = () => {
                   <h4 className="font-medium text-gray-900 dark:text-white">Documents & Area</h4>
                   <div className="bg-gray-50 p-4 rounded-lg space-y-2">
                     <div><strong>Files Uploaded:</strong> {uploadedFiles.length}</div>
-                    <div><strong>Area Defined:</strong> {polygonData ? 'Yes' : 'No'}</div>
-                    <div><strong>Claim Type:</strong> {watchedValues.claimType || 'Not specified'}</div>
+                    <div><strong>Area Defined:</strong> {polygonData || selectedKhasra ? 'Yes' : 'No'}</div>
+                    <div><strong>Claim Type:</strong> {watchData.claimType || 'Not specified'}</div>
                   </div>
+
+                  {(polygonData?.geometry?.coordinates[0] || selectedKhasra?.geometry?.coordinates[0]) && (
+                    <div className="bg-blue-50 p-4 rounded-lg">
+                      <h5 className="text-xs font-bold text-blue-700 uppercase mb-2">Mapped Boundary Coordinates</h5>
+                      <div className="max-h-32 overflow-y-auto text-[10px] font-mono space-y-1">
+                        {(polygonData?.geometry?.coordinates[0] || selectedKhasra?.geometry?.coordinates[0]).map((coord, i) => (
+                           <div key={i} className="flex justify-between border-b border-blue-100 last:border-0 pb-1">
+                             <span>Pt {i+1}:</span>
+                             <span>{coord[1].toFixed(6)}, {coord[0].toFixed(6)}</span>
+                           </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -418,10 +525,20 @@ const ClaimSubmission = () => {
             ) : (
               <button
                 type="submit"
-                className="flex items-center px-6 py-2 border border-transparent rounded-md text-sm font-medium text-white bg-green-600 hover:bg-green-700"
+                disabled={isSubmitting}
+                className="flex items-center px-6 py-2 border border-transparent rounded-md text-sm font-medium text-white bg-green-600 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <CheckCircle className="h-4 w-4 mr-2" />
-                Submit Claim
+                {isSubmitting ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                    Submitting...
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle className="h-4 w-4 mr-2" />
+                    Submit Claim
+                  </>
+                )}
               </button>
             )}
           </div>

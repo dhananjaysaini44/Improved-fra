@@ -92,12 +92,20 @@ class ClaimService {
     try {
       const user = JSON.parse(localStorage.getItem('user') || '{}');
       const form = new FormData();
-      form.append('claimant_name', claimData.claimantName || '');
+      form.append('claimant_name', claimData.claimant_name || '');
       form.append('village', claimData.village || '');
       form.append('state', claimData.state || '');
       form.append('district', claimData.district || '');
-      form.append('polygon', JSON.stringify(claimData.polygon || []));
+      form.append('polygon', typeof claimData.polygon === 'string' ? claimData.polygon : JSON.stringify(claimData.polygon || []));
       form.append('user_id', user.id || '');
+      
+      // New fields for Khasra system
+      if (claimData.khasra_no) form.append('khasra_no', claimData.khasra_no);
+      if (claimData.khata_no) form.append('khata_no', claimData.khata_no);
+      if (claimData.village_code) form.append('village_code', claimData.village_code);
+      if (claimData.tehsil_code) form.append('tehsil_code', claimData.tehsil_code);
+      if (claimData.patwari_name) form.append('patwari_name', claimData.patwari_name);
+      if (claimData.land_area_hectares) form.append('land_area_hectares', claimData.land_area_hectares);
       (claimData.files || []).forEach(f => form.append('documents', f, f.name));
 
       const response = await this.api.post('/claims/submit', form, {

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
-import { MapContainer, TileLayer, LayersControl, LayerGroup, GeoJSON, CircleMarker, Popup } from 'react-leaflet';
+import { MapContainer, TileLayer, LayersControl, LayerGroup, GeoJSON, CircleMarker, Popup, useMap } from 'react-leaflet';
+const { BaseLayer, Overlay } = LayersControl;
 import { FeatureGroup } from 'react-leaflet';
 import { EditControl } from 'react-leaflet-draw';
 import { useLocation } from 'react-router-dom';
@@ -8,8 +9,16 @@ import 'leaflet-draw/dist/leaflet.draw.css';
 import L from 'leaflet';
 import claimService from '../services/claimService';
 
+// Internal component to capture the map instance in v4
+const MapInstanceCapture = ({ setMap }) => {
+  const map = useMap();
+  useEffect(() => {
+    if (map) setMap(map);
+  }, [map, setMap]);
+  return null;
+};
+
 const Map = () => {
-  // Center map roughly over Madhya Pradesh, Tripura, Odisha, Telangana region
   const position = [22.5, 82.5]; // Central India region
 
   const location = useLocation();
@@ -29,16 +38,18 @@ const Map = () => {
   const [paneReady, setPaneReady] = useState(false);
 
   useEffect(() => {
+    let isMounted = true;
     (async () => {
       try {
         const data = await claimService.getClaims();
-        setClaims(data);
+        if (isMounted) setClaims(data);
       } catch (e) {
-        setError(e.message || 'Failed to load claims');
+        if (isMounted) setError(e.message || 'Failed to load claims');
       } finally {
-        setLoading(false);
+        if (isMounted) setLoading(false);
       }
     })();
+    return () => { isMounted = false; };
   }, []);
 
   const filteredClaims = useMemo(() => {
@@ -59,7 +70,7 @@ const Map = () => {
 
   const getClaimBounds = (claim) => {
     try {
-      if (!claim?.polygon) return null;
+      if (!claim?.polygon || (Array.isArray(claim.polygon) && claim.polygon.length === 0)) return null;
       const gj = L.geoJSON(claim.polygon);
       const bounds = gj.getBounds();
       if (bounds && bounds.isValid()) return bounds;
@@ -84,16 +95,18 @@ const Map = () => {
     }
   };
 
-  // Focus on claim from URL like /map?claim=123
   useEffect(() => {
     if (!map || claims.length === 0) return;
     const params = new URLSearchParams(location.search);
     const claimId = params.get('claim');
     if (!claimId) return;
     const match = claims.find(c => String(c.id) === String(claimId));
-    const b = getClaimBounds(match);
-    if (b) {
-      map.fitBounds(b, { padding: [20, 20], maxZoom: 12 });
+    if (match) {
+        selectClaim(match);
+        const b = getClaimBounds(match);
+        if (b) {
+          map.fitBounds(b, { padding: [20, 20], maxZoom: 14 });
+        }
     }
   }, [location.search, map, claims]);
 
@@ -115,7 +128,7 @@ const Map = () => {
     }
     const pane = map.getPane('selected-claim-pane');
     if (pane) {
-      pane.style.zIndex = 650; // above overlay polygons
+      pane.style.zIndex = 650;
       setPaneReady(true);
     } else {
       setPaneReady(false);
@@ -126,7 +139,7 @@ const Map = () => {
     const s = (status || '').toLowerCase();
     if (s === 'approved') return '#10B981';
     if (s === 'rejected') return '#EF4444';
-    return '#3B82F6'; // pending/default
+    return '#3B82F6';
   };
 
   const claimLabel = (c) => `${c.claimantName || 'Unknown'} — ${c.village || '-'}, ${c.district || '-'}, ${c.state || '-'}`;
@@ -150,13 +163,13 @@ const Map = () => {
     setSearch(claimLabel(claim));
     setShowDropdown(false);
     setHighlightIndex(-1);
-    setShowHighlight(false);
+    setShowHighlight(!!getClaimBounds(claim));
   };
 
   const zoomToClaim = (claim) => {
     const b = getClaimBounds(claim);
     if (b && map) {
-      map.fitBounds(b, { padding: [20, 20], maxZoom: 12 });
+      map.fitBounds(b, { padding: [20, 20], maxZoom: 14 });
     }
   };
 
@@ -170,15 +183,15 @@ const Map = () => {
   };
 
   return (
-    <div>
+    <div className="p-4" style={{ minHeight: '100vh' }}>
       <h1 className="text-3xl font-bold mb-8 text-gray-900 dark:text-white">Interactive WebGIS Map</h1>
 
-      <div className="mb-4 relative z-[13000]" ref={containerRef}>
+      <div className="mb-4 relative z-[9999]" ref={containerRef}>
         <div className="flex">
           <input
             ref={inputRef}
             type="text"
-            placeholder="Search"
+            placeholder="Search claimants, villages, or IDs..."
             value={search}
             onChange={(e) => { setSearch(e.target.value); setShowDropdown(true); setHighlightIndex(-1); setSelectedClaim(null); setSelectedCenter(null); setShowHighlight(false); }}
             onFocus={() => setShowDropdown(true)}
@@ -194,7 +207,6 @@ const Map = () => {
                 if (highlightIndex >= 0 && suggestions[highlightIndex]) {
                   e.preventDefault();
                   selectClaim(suggestions[highlightIndex]);
-                  // Do not auto-zoom on selection; user triggers zoom with Search
                 } else {
                   zoomSelected();
                 }
@@ -203,10 +215,10 @@ const Map = () => {
                 setHighlightIndex(-1);
               }
             }}
-            className="border p-2 rounded-l w-full"
+            className="border p-2 rounded-l w-full bg-white dark:bg-gray-800 dark:text-white"
           />
           <button
-            className="px-4 py-2 bg-blue-600 text-white rounded-r hover:bg-blue-700"
+            className="px-4 py-2 bg-blue-600 text-white rounded-r hover:bg-blue-700 font-bold"
             type="button"
             onClick={zoomSelected}
           >
@@ -215,7 +227,7 @@ const Map = () => {
         </div>
 
         {showDropdown && (
-          <div className="absolute left-0 right-0 mt-1 max-h-60 overflow-auto bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg z-[14000]">
+          <div className="absolute left-0 right-0 mt-1 max-h-60 overflow-auto bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg z-[10000]">
             {suggestions.length === 0 ? (
               <div className="px-3 py-2 text-sm text-gray-500 dark:text-gray-400">Type to search claims</div>
             ) : (
@@ -228,7 +240,7 @@ const Map = () => {
                   onMouseLeave={() => setHighlightIndex(-1)}
                   onMouseDown={(e) => { e.preventDefault(); selectClaim(c); }}
                 >
-                  <span className="text-sm">{claimLabel(c)}</span>
+                  <span className="text-sm dark:text-white">{claimLabel(c)}</span>
                   <span className="ml-2 text-xs text-gray-500">{c.status || 'pending'}</span>
                 </button>
               ))
@@ -238,54 +250,84 @@ const Map = () => {
       </div>
 
       {error && (
-        <div className="mb-2 text-red-600">{error}</div>
+        <div className="mb-2 text-red-600 bg-red-50 p-3 rounded-lg border border-red-200">{error}</div>
       )}
 
-      <div className="h-96 w-full">
-        <MapContainer center={position} zoom={5} style={{ height: '100%', width: '100%' }} whenCreated={setMap}>
+      <div className="h-[600px] w-full rounded-2xl overflow-hidden shadow-2xl border border-gray-200 dark:border-gray-700 relative">
+        <MapContainer center={position} zoom={5} style={{ height: '100%', width: '100%' }}>
+          <MapInstanceCapture setMap={setMap} />
           <LayersControl position="topright">
-            <LayersControl.BaseLayer checked name="OpenStreetMap">
+            <BaseLayer checked name="OpenStreetMap">
               <TileLayer
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                 attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
               />
-            </LayersControl.BaseLayer>
-            <LayersControl.BaseLayer name="Satellite">
+            </BaseLayer>
+            <BaseLayer name="Satellite">
               <TileLayer
                 url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
                 attribution='&copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
               />
-            </LayersControl.BaseLayer>
-            <LayersControl.Overlay checked name="Claims">
+            </BaseLayer>
+            <Overlay checked name="Existing Claims">
               <LayerGroup>
-                {!loading && filteredClaims.map((claim) => (
-                  (claim && claim.polygon && getClaimBounds(claim)) ? (
+                {!loading && filteredClaims.map((claim) => {
+                  const bounds = getClaimBounds(claim);
+                  if (!claim?.polygon || !bounds) return null;
+                  return (
                     <GeoJSON
                       key={claim.id}
                       data={claim.polygon}
                       style={{ color: statusColor(claim.status), weight: 2, fillOpacity: 0.2 }}
                       onEachFeature={(feature, layer) => {
+                        const geometry = feature?.geometry;
+                        const coords = (geometry?.type === 'Polygon') ? geometry.coordinates[0] : 
+                                      (geometry?.type === 'MultiPolygon') ? geometry.coordinates[0][0] : [];
+                        
+                        const coordList = coords.slice(0, 5).map(c => 
+                          `<div style="font-family: monospace;">${c[1].toFixed(5)}, ${c[0].toFixed(5)}</div>`
+                        ).join('');
+                        
                         layer.bindPopup(
-                          `<div>
+                          `<div style="font-family: sans-serif; gap: 4px; display: flex; flex-direction: column; min-width: 150px;">
                             <div><strong>Claimant:</strong> ${claim.claimantName || '-'} </div>
                             <div><strong>Village:</strong> ${claim.village || '-'} </div>
-                            <div><strong>Status:</strong> ${claim.status || 'pending'} </div>
-                            <div><strong>ID:</strong> ${claim.id}</div>
+                            <div style="padding-top: 4px; border-top: 1px solid #eee; margin-top: 4px;">
+                               <strong>Main Boundaries:</strong>
+                               <div style="font-size: 10px; color: #666; margin-top: 2px;">${coordList}${coords.length > 5 ? '<div>...</div>' : ''}</div>
+                            </div>
+                            <div style="font-size: 10px; color: #999; margin-top: 4px;">ID: ${claim.id}</div>
                           </div>`
                         );
+                        layer.on('mousemove', (e) => {
+                          const { lat, lng } = e.latlng;
+                          layer.bindTooltip(`Lat: ${lat.toFixed(6)}<br/>Lng: ${lng.toFixed(6)}`, {
+                            sticky: true,
+                            className: 'custom-tooltip'
+                          }).openTooltip();
+                        });
                       }}
                     />
-                  ) : null
-                ))}
+                  );
+                })}
               </LayerGroup>
-            </LayersControl.Overlay>
+            </Overlay>
           </LayersControl>
 
           {showHighlight && paneReady && selectedHasValidPolygon && (
             <GeoJSON
               data={selectedClaim.polygon}
               pane="selected-claim-pane"
-              style={{ color: '#2563EB', weight: 3, fillOpacity: 0.25 }}
+              style={{ color: '#2563EB', weight: 4, fillOpacity: 0.4 }}
+              onEachFeature={(feature, layer) => {
+                layer.on('mousemove', (e) => {
+                  const { lat, lng } = e.latlng;
+                  layer.bindTooltip(`Lat: ${lat.toFixed(6)}<br/>Lng: ${lng.toFixed(6)}`, {
+                    sticky: true,
+                    className: 'custom-tooltip'
+                  }).openTooltip();
+                });
+              }}
             />
           )}
 
@@ -297,10 +339,10 @@ const Map = () => {
               radius={8}
             >
               <Popup>
-                <div>
+                <div style={{ gap: '4px', display: 'flex', flexDirection: 'column' }}>
                   <div><strong>Selected Claim</strong></div>
-                  <div>{(selectedClaim?.claimantName || 'Unknown')} — {(selectedClaim?.village || '-')}, {(selectedClaim?.district || '-')}, {(selectedClaim?.state || '-')}</div>
-                  <div>ID: {selectedClaim?.id}</div>
+                  <div style={{ fontSize: '12px' }}>{(selectedClaim?.claimantName || 'Unknown')} — {(selectedClaim?.village || '-')}</div>
+                  <div style={{ fontSize: '10px', color: '#999' }}>ID: {selectedClaim?.id}</div>
                 </div>
               </Popup>
             </CircleMarker>

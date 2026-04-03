@@ -27,3 +27,21 @@
 :root.dark .bg-white {
   color: #111827; /* gray-900 */
 }
+/* Custom Tooltip Styling */
+.custom-tooltip {
+  background-color: rgba(17, 24, 39, 0.9) !important; /* gray-900 */
+  border: 1px solid rgba(55, 65, 81, 1) !important; /* gray-700 */
+  color: white !important;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important;
+  font-size: 11px !important;
+  padding: 6px 10px !important;
+  border-radius: 8px !important;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06) !important;
+}
+
+.leaflet-tooltip-top:before,
+.leaflet-tooltip-bottom:before,
+.leaflet-tooltip-left:before,
+.leaflet-tooltip-right:before {
+  border: none !important;
+}
