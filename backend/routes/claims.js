@@ -5,6 +5,7 @@ const router = express.Router();
 const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 const axios = require('axios');
 const FormData = require('form-data');
 
@@ -35,6 +36,44 @@ async function callModelAPI(files, payload) {
   const timeout = Number(process.env.MODEL_TIMEOUT_MS || 60000);
   const response = await axios.post(endpoint, form, { headers, timeout, maxContentLength: Infinity, maxBodyLength: Infinity });
   return response.data;
+}
+
+function uniqueTargetPath(dirPath, originalName) {
+  const parsed = path.parse(originalName || 'document');
+  const safeBase = (parsed.name || 'document').replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').trim() || 'document';
+  const safeExt = parsed.ext || '';
+  let candidate = path.join(dirPath, `${safeBase}${safeExt}`);
+  let counter = 1;
+  while (fs.existsSync(candidate)) {
+    candidate = path.join(dirPath, `${safeBase}-${counter}${safeExt}`);
+    counter += 1;
+  }
+  return candidate;
+}
+
+function bundleDocumentsIfNeeded(claimDir, filePaths) {
+  if (!Array.isArray(filePaths) || filePaths.length <= 1) {
+    return filePaths || [];
+  }
+
+  const archivePath = path.join(claimDir, 'documents_bundle.tar.gz');
+  const archiveName = path.basename(archivePath);
+  const entryNames = filePaths.map((filePath) => path.basename(filePath));
+
+  execFileSync('tar', ['-czf', archivePath, '-C', claimDir, ...entryNames], {
+    cwd: claimDir,
+    stdio: 'ignore',
+  });
+
+  for (const filePath of filePaths) {
+    try {
+      fs.unlinkSync(filePath);
+    } catch (err) {
+      // Leave partially bundled files in place rather than failing the whole claim.
+    }
+  }
+
+  return [archivePath];
 }
 
 function safeJson(value, fallback) {
@@ -464,16 +503,12 @@ router.post('/submit', upload.array('documents'), async (req, res) => {
     const uploaded = req.files || [];
     const savedPaths = [];
     for (const f of uploaded) {
-      const targetPath = path.join(claimDir, f.originalname);
+      const targetPath = uniqueTargetPath(claimDir, f.originalname);
       fs.renameSync(f.path, targetPath);
       savedPaths.push(targetPath);
     }
 
-    // 3) Update claim with document paths (relative to backend directory for portability)
-    const relativePaths = savedPaths.map(p => path.relative(path.join(__dirname, '..'), p));
-    db.prepare('UPDATE claims SET documents = ? WHERE id = ?').run(JSON.stringify(relativePaths), claimId);
-
-    // 4) Call local Python model API
+    // 3) Call Python model API using the original uploaded files before optional bundling.
     let modelResult = null;
     let modelStatus = 'not_run';
     try {
@@ -490,6 +525,11 @@ router.post('/submit', upload.array('documents'), async (req, res) => {
       modelStatus = 'error';
       modelResult = { error: err.message };
     }
+
+    // 4) Bundle multiple uploaded files into a single archive for long-term storage.
+    const storedPaths = bundleDocumentsIfNeeded(claimDir, savedPaths);
+    const relativePaths = storedPaths.map(p => path.relative(path.join(__dirname, '..'), p));
+    db.prepare('UPDATE claims SET documents = ? WHERE id = ?').run(JSON.stringify(relativePaths), claimId);
 
     // 5) Save model result to disk and DB
     const resultFile = path.join(claimDir, 'model_result.json');
