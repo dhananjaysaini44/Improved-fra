@@ -1,93 +1,133 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSelector } from 'react-redux';
-import { FileText, CheckCircle, XCircle, AlertTriangle, TrendingUp, Users, MapPin, Calendar, ArrowUpRight, ArrowDownRight, Eye } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, PieChart, Pie, Cell } from 'recharts';
-import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
+import { FileText, CheckCircle, AlertTriangle, TrendingUp, Users, MapPin, Calendar, ArrowUpRight, ArrowDownRight, Eye } from 'lucide-react';
+import { CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis } from 'recharts';
+import { MapContainer, TileLayer, Popup, Circle } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
+import claimService from '../services/claimService';
+import alertsService from '../services/alertsService';
+import logService from '../services/logService';
 
 const Dashboard = () => {
   const navigate = useNavigate();
   const { user } = useSelector((state) => state.auth);
-  
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  // Dynamic data states
+  const [kpiData, setKpiData] = useState([]);
+  const [monthlyData, setMonthlyData] = useState([]);
+  const [stateData, setStateData] = useState([]);
+  const [recentActivity, setRecentActivity] = useState([]);
+  const [claimLocations, setClaimLocations] = useState([]);
+
+  useEffect(() => {
+    const fetchDashboardData = async () => {
+      setLoading(true);
+      try {
+        // 1. Fetch KPI Stats
+        const stats = await claimService.getClaimStats() || { total: 0, pending: 0, approved: 0, rejected: 0 };
+        const activeAlerts = await alertsService.getAlerts({ status: 'active' }) || [];
+        
+        const kpis = [
+          { title: 'Total Claims', value: (stats.total || 0).toLocaleString(), change: '+0%', trend: 'up', icon: FileText, color: 'text-blue-600', bgColor: 'bg-blue-50' },
+          { title: 'Approved Claims', value: (stats.approved || 0).toLocaleString(), change: '+0%', trend: 'up', icon: CheckCircle, color: 'text-green-600', bgColor: 'bg-green-50' },
+          { title: 'Pending Review', value: (stats.pending || 0).toLocaleString(), change: '+0%', trend: 'down', icon: Users, color: 'text-yellow-600', bgColor: 'bg-yellow-50' },
+          { title: 'Active Alerts', value: (activeAlerts.length || 0).toLocaleString(), change: '+0%', trend: 'up', icon: AlertTriangle, color: 'text-red-600', bgColor: 'bg-red-50' }
+        ];
+        setKpiData(kpis);
+
+        // 2. Fetch Monthly Trends
+        const trends = await claimService.getClaimTrends() || [];
+        setMonthlyData(trends.length > 0 ? trends : []);
+
+        // 3. Fetch State Distribution
+        const distribution = await claimService.getStateDistribution() || [];
+        setStateData(distribution.length > 0 ? distribution : []);
+
+        // 4. Fetch Recent Activity (Logs for Admin, fallback for User)
+        try {
+          if (user?.role === 'admin') {
+            const logs = await logService.getRecentLogs(5) || [];
+            const activities = (Array.isArray(logs) ? logs : []).map(log => ({
+              id: log.id,
+              action: (log.action || 'Unknown').replace(/_/g, ' '),
+              user: log.user_name || 'System',
+              time: log.created_at ? new Date(log.created_at).toLocaleString() : 'Recently',
+              type: (log.action || '').includes('claim') ? 'claim' : (log.action || '').includes('approve') ? 'approval' : 'report'
+            }));
+            setRecentActivity(activities);
+          } else {
+            // Non-admin: show recent claims
+            const claims = await claimService.getClaims({ limit: 5 }) || [];
+            const activities = (Array.isArray(claims) ? claims : []).map(c => ({
+              id: c.id,
+              action: `New claim: ${c.claimantName || 'Unknown'}`,
+              user: c.village || 'Unknown',
+              time: c.created_at ? new Date(c.created_at).toLocaleString() : 'Recently',
+              type: 'claim'
+            }));
+            setRecentActivity(activities);
+          }
+        } catch (logErr) {
+          console.warn('Could not fetch logs', logErr);
+          setRecentActivity([]);
+        }
+
+        // 5. Fetch Map Locations
+        const allClaims = await claimService.getClaims() || [];
+        const locations = (Array.isArray(allClaims) ? allClaims : [])
+          .filter(c => c.polygon && Array.isArray(c.polygon) && c.polygon.length > 0)
+          .map(c => ({
+            id: c.id,
+            position: c.polygon[0], // Use first coordinate as representative center
+            village: c.village || 'Unknown',
+            status: (c.status || 'Pending').charAt(0).toUpperCase() + (c.status || 'Pending').slice(1),
+            state: c.state || 'Unknown'
+          }));
+        setClaimLocations(locations);
+
+      } catch (err) {
+        console.error('Error fetching dashboard data:', err);
+        setError(err.message || 'Failed to load dashboard data');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchDashboardData();
+  }, [user]);
+
   // Extract first name from full name
   const getFirstName = (fullName) => {
     if (!fullName) return 'User';
     return fullName.split(' ')[0];
   };
 
-  // Mock data - replace with real data from API
-  const kpiData = [
-    {
-      title: 'Total Claims',
-      value: '1,247',
-      change: '+12.5%',
-      trend: 'up',
-      icon: FileText,
-      color: 'text-blue-600',
-      bgColor: 'bg-blue-50'
-    },
-    {
-      title: 'Approved Claims',
-      value: '892',
-      change: '+8.2%',
-      trend: 'up',
-      icon: CheckCircle,
-      color: 'text-green-600',
-      bgColor: 'bg-green-50'
-    },
-    {
-      title: 'Pending Review',
-      value: '156',
-      change: '-3.1%',
-      trend: 'down',
-      icon: Users,
-      color: 'text-yellow-600',
-      bgColor: 'bg-yellow-50'
-    },
-    {
-      title: 'Active Alerts',
-      value: '23',
-      change: '+15.3%',
-      trend: 'up',
-      icon: AlertTriangle,
-      color: 'text-red-600',
-      bgColor: 'bg-red-50'
-    }
-  ];
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-full min-h-[400px]">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600"></div>
+      </div>
+    );
+  }
 
-  const monthlyData = [
-    { month: 'Jan', claims: 120, approved: 95 },
-    { month: 'Feb', claims: 135, approved: 110 },
-    { month: 'Mar', claims: 148, approved: 125 },
-    { month: 'Apr', claims: 162, approved: 138 },
-    { month: 'May', claims: 175, approved: 150 },
-    { month: 'Jun', claims: 190, approved: 165 }
-  ];
-
-  const stateData = [
-    { name: 'Madhya Pradesh', value: 35, color: '#3B82F6' },
-    { name: 'Odisha', value: 25, color: '#10B981' },
-    { name: 'Telangana', value: 20, color: '#F59E0B' },
-    { name: 'Tripura', value: 20, color: '#EF4444' }
-  ];
-
-  const recentActivity = [
-    { id: 1, action: 'New claim submitted', user: 'Rajesh Kumar', time: '2 hours ago', type: 'claim' },
-    { id: 2, action: 'Claim approved', user: 'Priya Singh', time: '4 hours ago', type: 'approval' },
-    { id: 3, action: 'Alert generated', user: 'System', time: '6 hours ago', type: 'alert' },
-    { id: 4, action: 'Report generated', user: 'Admin', time: '1 day ago', type: 'report' }
-  ];
-
-  // Mock claim locations for mini-map
-  const claimLocations = [
-    { id: 1, position: [23.2599, 81.8282], village: 'Village A', status: 'Approved', state: 'MP' },
-    { id: 2, position: [23.9408, 91.9882], village: 'Village B', status: 'Pending', state: 'TR' },
-    { id: 3, position: [20.9517, 85.0985], village: 'Village C', status: 'Approved', state: 'OD' },
-    { id: 4, position: [17.3850, 78.4867], village: 'Village D', status: 'Pending', state: 'TL' },
-    { id: 5, position: [22.9734, 78.6569], village: 'Village E', status: 'Approved', state: 'MP' },
-    { id: 6, position: [24.6637, 93.9063], village: 'Village F', status: 'Pending', state: 'TR' }
-  ];
+  if (error) {
+    return (
+      <div className="bg-red-50 p-6 rounded-lg border border-red-200 text-center">
+        <AlertTriangle className="h-12 w-12 text-red-500 mx-auto mb-4" />
+        <h2 className="text-lg font-bold text-red-800">Error</h2>
+        <p className="text-red-600">{error}</p>
+        <button 
+          onClick={() => window.location.reload()}
+          className="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

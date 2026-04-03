@@ -2,6 +2,8 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const dotenv = require('dotenv');
+const fs = require('fs');
+const path = require('path');
 const db = require('./db');
 
 dotenv.config();
@@ -13,6 +15,12 @@ const PORT = process.env.PORT || 3000;
 app.use(helmet());
 app.use(cors());
 app.use(express.json());
+
+// Request logging middleware
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+  next();
+});
 
 // Database setup (shared, absolute path)
 // db is imported from ./db
@@ -84,6 +92,7 @@ try { db.exec("ALTER TABLE claims ADD COLUMN rejection_reason TEXT"); } catch (e
 try { db.exec("ALTER TABLE claims ADD COLUMN model_result TEXT"); } catch (e) {}
 try { db.exec("ALTER TABLE claims ADD COLUMN model_status TEXT"); } catch (e) {}
 try { db.exec("ALTER TABLE claims ADD COLUMN model_run_at DATETIME"); } catch (e) {}
+try { db.exec("ALTER TABLE alerts ADD COLUMN status TEXT DEFAULT 'active'"); } catch (e) {}
 try { db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_gram_panchayat_unique ON users(gram_panchayat_id)"); } catch (e) {}
 
 // Routes
@@ -104,3 +113,11 @@ app.listen(PORT, '0.0.0.0', () => {
 });
 
 module.exports = app;
+
+// Global error handler (at the very end)
+app.use((err, req, res, next) => {
+  const errorLog = `${new Date().toISOString()} - ${req.method} ${req.url}\n${err.stack}\n\n`;
+  fs.appendFileSync(path.join(__dirname, 'error.log'), errorLog);
+  console.error('SERVER ERROR:', err.stack);
+  res.status(500).json({ message: 'Internal Server Error', error: err.message });
+});

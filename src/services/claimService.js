@@ -169,6 +169,33 @@ class ClaimService {
     }
   }
 
+  async getClaimTrends() {
+    try {
+      const response = await this.api.get('/claims/stats/trends');
+      return response.data;
+    } catch (error) {
+      throw new Error(error.response?.data?.message || 'Failed to fetch trends');
+    }
+  }
+
+  async getStateDistribution() {
+    try {
+      const response = await this.api.get('/claims/stats/state-distribution');
+      return response.data;
+    } catch (error) {
+      throw new Error(error.response?.data?.message || 'Failed to fetch state distribution');
+    }
+  }
+
+  async getDistrictDistribution() {
+    try {
+      const response = await this.api.get('/claims/stats/district-distribution');
+      return response.data;
+    } catch (error) {
+      throw new Error(error.response?.data?.message || 'Failed to fetch district distribution');
+    }
+  }
+
   async uploadDocument(file) {
     try {
       const formData = new FormData();
