@@ -5,6 +5,7 @@ import { AlertTriangle, Edit, Eye, Plus, Save, Shield, Trash2, X } from 'lucide-
 import authService from '../services/authService';
 import { approveClaim, clearClaimsError, fetchClaims, rejectClaim } from '../store/slices/claimsSlice';
 import { clearUsersError, deleteUser as deleteUserAction, fetchUsers, updateUser as updateUserAction } from '../store/slices/usersSlice';
+import { getDuplicateSeverity, getPipelineSeverity } from '../utils/claimReviewStatus';
 
 const Admin = () => {
   const { user, isAuthenticated } = useSelector((state) => state.auth);
@@ -22,26 +23,6 @@ const Admin = () => {
   const [selectedClaim, setSelectedClaim] = useState(null);
   const [notification, setNotification] = useState(null);
   const pendingClaims = claims.filter((claim) => String(claim.status || '').toLowerCase() === 'pending');
-
-  const getDuplicateSeverity = (claim) => {
-    const score = claim?.duplicateAnalysis?.duplicate_score || 0;
-    if (score >= 0.8) return { label: 'High risk', className: 'bg-red-100 text-red-800' };
-    if (score >= 0.5) return { label: 'Review', className: 'bg-amber-100 text-amber-800' };
-    return { label: 'Clear', className: 'bg-green-100 text-green-800' };
-  };
-
-  const getPipelineSeverity = (claim) => {
-    const suspicious = claim?.confidenceScores?.is_suspicious;
-    const warningCount = claim?.gisWarnings?.length || 0;
-    const conflictCount = claim?.spatialConflicts?.length || 0;
-    if (suspicious || conflictCount > 0 || warningCount > 0) {
-      return { label: 'Spatial review', className: 'bg-amber-100 text-amber-800' };
-    }
-    if ((claim?.pipelineStatus || '').toUpperCase().startsWith('SCORED')) {
-      return { label: 'Pipeline scored', className: 'bg-blue-100 text-blue-800' };
-    }
-    return { label: 'Pending', className: 'bg-gray-100 text-gray-700' };
-  };
 
   // Check admin access and fetch users
   useEffect(() => {

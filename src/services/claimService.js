@@ -27,6 +27,7 @@ const normalizeClaim = (claim) => {
     pipelineResult,
     modelStatus: claim.model_status || null,
     pipelineStatus: claim.pipeline_status || pipelineResult?.pipeline_status || null,
+    pipelineError: claim.pipeline_error || pipelineResult?.error || null,
     duplicateAnalysis: modelResult?.duplicate_analysis || null,
     extractedFields,
     gisDiagnostics,

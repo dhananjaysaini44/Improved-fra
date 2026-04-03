@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import { clearClaimsError, fetchClaims } from '../store/slices/claimsSlice';
+import { getDuplicateSeverity, getPipelineFailureReason, getPipelineSeverity } from '../utils/claimReviewStatus';
 
 const ClaimTracking = () => {
   const [filter, setFilter] = useState('');
@@ -21,31 +22,6 @@ const ClaimTracking = () => {
     (claim.status || '').toLowerCase().includes(filter.toLowerCase()) ||
     (claim.claimantName || '').toLowerCase().includes(filter.toLowerCase())
   );
-
-  const duplicateLabel = (claim) => {
-    const score = claim?.duplicateAnalysis?.duplicate_score || 0;
-    if (score >= 0.8) return { text: 'High duplicate risk', className: 'bg-red-100 text-red-800' };
-    if (score >= 0.5) return { text: 'Needs duplicate review', className: 'bg-amber-100 text-amber-800' };
-    if (claim.modelStatus === 'success') return { text: 'OCR reviewed', className: 'bg-green-100 text-green-800' };
-    return { text: 'No OCR result', className: 'bg-gray-100 text-gray-700' };
-  };
-
-  const pipelineLabel = (claim) => {
-    const status = String(claim.pipelineStatus || '').toUpperCase();
-    if (status.includes('ERROR')) {
-      return { text: 'Error', className: 'bg-red-100 text-red-800' };
-    }
-    if ((claim.spatialConflicts || []).length > 0) {
-      return { text: `${claim.spatialConflicts.length} spatial conflict(s)`, className: 'bg-red-100 text-red-800' };
-    }
-    if ((claim.gisWarnings || []).length > 0) {
-      return { text: `${claim.gisWarnings.length} GIS warning(s)`, className: 'bg-amber-100 text-amber-800' };
-    }
-    if ((claim.pipelineStatus || '').toUpperCase().startsWith('SCORED')) {
-      return { text: 'GIS checked', className: 'bg-blue-100 text-blue-800' };
-    }
-    return { text: 'Pipeline pending', className: 'bg-gray-100 text-gray-700' };
-  };
 
   return (
     <div>
@@ -83,7 +59,11 @@ const ClaimTracking = () => {
             </tr>
           </thead>
           <tbody>
-            {filteredClaims.map(claim => (
+            {filteredClaims.map(claim => {
+              const duplicateSeverity = getDuplicateSeverity(claim);
+              const pipelineSeverity = getPipelineSeverity(claim);
+              const pipelineReason = getPipelineFailureReason(claim);
+              return (
               <tr key={claim.id} className="border-t">
                 <td className="p-4">{claim.id}</td>
                 <td className="p-4">{claim.village || '-'}</td>
@@ -97,14 +77,19 @@ const ClaimTracking = () => {
                   </span>
                 </td>
                 <td className="p-4">
-                  <span className={`px-2 py-1 rounded text-xs font-medium ${duplicateLabel(claim).className}`}>
-                    {duplicateLabel(claim).text}
+                  <span className={`px-2 py-1 rounded text-xs font-medium ${duplicateSeverity.className}`}>
+                    {duplicateSeverity.label}
                   </span>
                 </td>
                 <td className="p-4">
-                  <span className={`px-2 py-1 rounded text-xs font-medium ${pipelineLabel(claim).className}`}>
-                    {pipelineLabel(claim).text}
+                  <span className={`px-2 py-1 rounded text-xs font-medium ${pipelineSeverity.className}`}>
+                    {pipelineSeverity.label}
                   </span>
+                  {pipelineReason && (
+                    <p className="mt-1 text-xs text-gray-600 max-w-xs truncate" title={pipelineReason}>
+                      {pipelineReason}
+                    </p>
+                  )}
                 </td>
                 <td className="p-4">{claim.submissionDate || '-'}</td>
                 <td className="p-4">
@@ -113,7 +98,8 @@ const ClaimTracking = () => {
                   </Link>
                 </td>
               </tr>
-            ))}
+            );
+            })}
           </tbody>
         </table>
       </div>
