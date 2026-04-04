@@ -5,6 +5,7 @@ import { AlertTriangle, Edit, Eye, Plus, Save, Shield, Trash2, X } from 'lucide-
 import authService from '../services/authService';
 import { approveClaim, clearClaimsError, fetchClaims, rejectClaim } from '../store/slices/claimsSlice';
 import { clearUsersError, deleteUser as deleteUserAction, fetchUsers, updateUser as updateUserAction } from '../store/slices/usersSlice';
+import { getDuplicateSeverity, getPipelineSeverity } from '../utils/claimReviewStatus';
 
 const Admin = () => {
   const { user, isAuthenticated } = useSelector((state) => state.auth);
@@ -24,13 +25,6 @@ const Admin = () => {
   const [isVerifying, setIsVerifying] = useState(false);
   const [notification, setNotification] = useState(null);
   const pendingClaims = claims.filter((claim) => String(claim.status || '').toLowerCase() === 'pending');
-
-  const getDuplicateSeverity = (claim) => {
-    const score = claim?.duplicateAnalysis?.duplicate_score || 0;
-    if (score >= 0.8) return { label: 'High risk', className: 'bg-red-100 text-red-800' };
-    if (score >= 0.5) return { label: 'Review', className: 'bg-amber-100 text-amber-800' };
-    return { label: 'Clear', className: 'bg-green-100 text-green-800' };
-  };
 
   // Check admin access and fetch users
   useEffect(() => {
@@ -359,11 +353,11 @@ const Admin = () => {
       )}
 
       <div className="mb-8">
-        <div className="flex justify-between items-center">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Admin Panel</h1>
           <button
             onClick={() => setIsAddModalOpen(true)}
-            className="bg-blue-500 text-white px-4 py-2 rounded-md hover:bg-blue-600 flex items-center"
+            className="w-full sm:w-auto bg-blue-500 text-white px-4 py-2 rounded-md hover:bg-blue-600 flex items-center justify-center"
           >
             <Plus className="h-4 w-4 mr-2" />
             Add User
@@ -373,14 +367,14 @@ const Admin = () => {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <div className="space-y-8">
-          <div className="bg-white p-6 rounded shadow">
+          <div className="bg-white p-6 rounded shadow overflow-hidden">
             <h2 className="text-xl font-semibold mb-4">Claim Moderation</h2>
-            <div className="mb-4 flex items-center justify-between">
+            <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-sm text-gray-600">Review and decide on pending claims</p>
-              <button onClick={refreshPendingClaims} className="text-sm px-3 py-1 bg-gray-100 rounded hover:bg-gray-200">Refresh</button>
+              <button onClick={refreshPendingClaims} className="w-full sm:w-auto text-sm px-3 py-1 bg-gray-100 rounded hover:bg-gray-200">Refresh</button>
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full">
+              <table className="w-full min-w-[860px] text-sm">
                 <thead>
                   <tr className="bg-gray-50">
                     <th className="p-2 text-left">ID</th>
@@ -388,6 +382,7 @@ const Admin = () => {
                     <th className="p-2 text-left">Village</th>
                     <th className="p-2 text-left">State</th>
                     <th className="p-2 text-left">OCR Review</th>
+                    <th className="p-2 text-left">GIS Review</th>
                     <th className="p-2 text-left">Submitted</th>
                     <th className="p-2 text-left">Actions</th>
                   </tr>
@@ -395,7 +390,7 @@ const Admin = () => {
                 <tbody>
                   {pendingClaims.length === 0 ? (
                     <tr>
-                      <td colSpan="7" className="p-4 text-center text-gray-500">
+                      <td colSpan="8" className="p-4 text-center text-gray-500">
                         No pending claims.
                       </td>
                     </tr>
@@ -408,7 +403,7 @@ const Admin = () => {
                         <td className="p-2">{c.state || '-'}</td>
                         <td className="p-2">
                           <div className="flex items-center gap-2">
-                            <span className={`px-2 py-1 rounded text-xs font-medium ${getDuplicateSeverity(c).className}`}>
+                            <span className={`px-2 py-1 rounded text-xs font-medium whitespace-nowrap ${getDuplicateSeverity(c).className}`}>
                               {getDuplicateSeverity(c).label}
                             </span>
                             {c.duplicateAnalysis && (
@@ -423,10 +418,17 @@ const Admin = () => {
                             )}
                           </div>
                         </td>
-                        <td className="p-2">{c.submissionDate || '-'}</td>
-                        <td className="p-2 space-x-2">
-                          <button onClick={() => handleApproveClaim(c.id)} className="px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700">Approve</button>
-                          <button onClick={() => handleRejectClaim(c.id)} className="px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700">Reject</button>
+                        <td className="p-2">
+                          <span className={`px-2 py-1 rounded text-xs font-medium whitespace-nowrap ${getPipelineSeverity(c).className}`}>
+                            {getPipelineSeverity(c).label}
+                          </span>
+                        </td>
+                        <td className="p-2 whitespace-nowrap">{c.submissionDate || '-'}</td>
+                        <td className="p-2">
+                          <div className="flex flex-col sm:flex-row gap-2">
+                            <button onClick={() => handleApproveClaim(c.id)} className="px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700 whitespace-nowrap">Approve</button>
+                            <button onClick={() => handleRejectClaim(c.id)} className="px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700 whitespace-nowrap">Reject</button>
+                          </div>
                         </td>
                       </tr>
                     ))
@@ -436,9 +438,10 @@ const Admin = () => {
             </div>
           </div>
 
-          <div className="bg-white p-6 rounded shadow">
+          <div className="bg-white p-6 rounded shadow overflow-hidden">
             <h2 className="text-xl font-semibold mb-4">User Management</h2>
-            <table className="w-full">
+            <div className="overflow-x-auto">
+            <table className="w-full min-w-[640px] text-sm">
             <thead>
               <tr className="bg-gray-50">
                 <th className="p-2 text-left">Name</th>
@@ -482,12 +485,13 @@ const Admin = () => {
             </tbody>
           </table>
           </div>
+          </div>
         </div>
 
-        <div className="bg-white p-6 rounded shadow">
-          <div className="flex justify-between items-center mb-4">
+        <div className="bg-white p-6 rounded shadow overflow-hidden">
+          <div className="flex flex-col gap-2 sm:flex-row sm:justify-between sm:items-center mb-4">
             <h2 className="text-xl font-semibold">System Logs</h2>
-            <div className="space-x-2">
+            <div className="flex flex-col sm:flex-row gap-2">
               <button onClick={fetchLogs} className="text-sm px-3 py-1 bg-gray-100 rounded hover:bg-gray-200">Refresh</button>
               <button onClick={clearLogs} className="text-sm px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700">Clear Logs</button>
             </div>
@@ -523,7 +527,7 @@ const Admin = () => {
       {/* Edit User Modal */}
       {isEditModalOpen && editingUser && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[12000]">
-          <div className="bg-white dark:bg-gray-800 dark:text-white p-6 rounded-lg w-96">
+          <div className="bg-white dark:bg-gray-800 dark:text-white p-6 rounded-lg w-full max-w-[calc(100vw-2rem)] sm:max-w-md mx-4">
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Edit User</h3>
               <button
@@ -597,7 +601,7 @@ const Admin = () => {
 
       {selectedClaim && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[12000]">
-          <div className="bg-white dark:bg-gray-800 dark:text-white p-6 rounded-lg w-full max-w-4xl max-h-[85vh] overflow-y-auto">
+          <div className="bg-white dark:bg-gray-800 dark:text-white p-6 rounded-lg w-full max-w-4xl mx-4 max-h-[85vh] overflow-y-auto">
             <div className="flex justify-between items-start mb-4">
               <div>
                 <h3 className="text-lg font-semibold text-gray-900 dark:text-white">OCR and Duplicate Review</h3>
@@ -734,6 +738,140 @@ const Admin = () => {
                       ))}
                   </div>
                 </div>
+
+                <div className="border rounded-lg p-4">
+                  <h4 className="font-semibold mb-3">GIS Diagnostics</h4>
+                  <div className="space-y-3 text-sm">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="bg-gray-50 dark:bg-gray-700 rounded p-3">
+                        <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">Pipeline Status</p>
+                        <p>{selectedClaim.pipelineStatus || 'Pending'}</p>
+                      </div>
+                      <div className="bg-gray-50 dark:bg-gray-700 rounded p-3">
+                        <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">Overall Score</p>
+                        <p>{selectedClaim.confidenceScores?.overall_score ?? '-'}</p>
+                      </div>
+                      <div className="bg-gray-50 dark:bg-gray-700 rounded p-3">
+                        <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">GIS Score</p>
+                        <p>{selectedClaim.confidenceScores?.gis_score ?? '-'}</p>
+                      </div>
+                      <div className="bg-gray-50 dark:bg-gray-700 rounded p-3">
+                        <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">Spatial Conflicts</p>
+                        <p>{selectedClaim.spatialConflicts?.length || 0}</p>
+                      </div>
+                      <div className="bg-gray-50 dark:bg-gray-700 rounded p-3">
+                        <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">Claimed Area (ha)</p>
+                        <p>{selectedClaim.gisDiagnostics?.claimed_area_ha ?? '-'}</p>
+                      </div>
+                      <div className="bg-gray-50 dark:bg-gray-700 rounded p-3">
+                        <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">Polygon Area (ha)</p>
+                        <p>{selectedClaim.gisDiagnostics?.polygon_area_ha ?? '-'}</p>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="bg-gray-50 dark:bg-gray-700 rounded p-3">
+                        <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">Area Discrepancy</p>
+                        <p>{selectedClaim.gisDiagnostics?.area_discrepancy_ratio ?? '-'}</p>
+                      </div>
+                      <div className="bg-gray-50 dark:bg-gray-700 rounded p-3">
+                        <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">District Boundary</p>
+                        <p>{selectedClaim.gisDiagnostics?.district_boundary_match ?? 'Not checked'}</p>
+                      </div>
+                    </div>
+
+                    <div>
+                      <h5 className="font-medium mb-2">Warnings</h5>
+                      {(selectedClaim.gisWarnings || []).length > 0 ? (
+                        <ul className="space-y-2">
+                          {selectedClaim.gisWarnings.map((warning, index) => (
+                            <li key={`${warning}-${index}`} className="bg-amber-50 text-amber-900 rounded p-3">
+                              {warning}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="text-gray-500">No GIS warnings returned.</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="border rounded-lg p-4">
+                  <h4 className="font-semibold mb-3">Review Summary</h4>
+                  <div className="space-y-3 text-sm">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="bg-gray-50 dark:bg-gray-700 rounded p-3">
+                        <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">Severity</p>
+                        <p>{selectedClaim.reviewSummary?.severity || 'pending'}</p>
+                      </div>
+                      <div className="bg-gray-50 dark:bg-gray-700 rounded p-3">
+                        <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">Recommendation</p>
+                        <p>{selectedClaim.reviewSummary?.recommendation || 'Await pipeline completion before final review.'}</p>
+                      </div>
+                    </div>
+                    <div>
+                      <h5 className="font-medium mb-2">Reasons</h5>
+                      {(selectedClaim.reviewSummary?.reasons || []).length > 0 ? (
+                        <ul className="space-y-2">
+                          {selectedClaim.reviewSummary.reasons.map((reason, index) => (
+                            <li key={`${reason}-${index}`} className="bg-gray-50 dark:bg-gray-700 rounded p-3">
+                              {reason}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="text-gray-500">No additional review reasons were generated.</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="border rounded-lg p-4">
+                  <h4 className="font-semibold mb-3">Parcel or Land Record Match</h4>
+                  {selectedClaim.parcelMatch?.best_match ? (
+                    <div className="space-y-3 text-sm">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="bg-gray-50 dark:bg-gray-700 rounded p-3">
+                          <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">Reference ID</p>
+                          <p>{selectedClaim.parcelMatch.best_match.reference_id || '-'}</p>
+                        </div>
+                        <div className="bg-gray-50 dark:bg-gray-700 rounded p-3">
+                          <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">Match Confidence</p>
+                          <p>{selectedClaim.parcelMatch.best_match.match_confidence ?? '-'}</p>
+                        </div>
+                        <div className="bg-gray-50 dark:bg-gray-700 rounded p-3">
+                          <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">Source</p>
+                          <p>{selectedClaim.parcelMatch.best_match.source_name || '-'}</p>
+                        </div>
+                        <div className="bg-gray-50 dark:bg-gray-700 rounded p-3">
+                          <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">Restricted</p>
+                          <p>{selectedClaim.parcelMatch.best_match.is_restricted ? 'Yes' : 'No'}</p>
+                        </div>
+                      </div>
+                      <div>
+                        <h5 className="font-medium mb-2">Match Basis</h5>
+                        {(selectedClaim.parcelMatch.best_match.match_basis || []).length > 0 ? (
+                          <ul className="space-y-2">
+                            {selectedClaim.parcelMatch.best_match.match_basis.map((item, index) => (
+                              <li key={`${item}-${index}`} className="bg-gray-50 dark:bg-gray-700 rounded p-3">
+                                {item}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <p className="text-gray-500">No match explanation available.</p>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-gray-500">
+                      {selectedClaim.parcelMatch?.source_available
+                        ? 'No parcel or land record match was strong enough to persist.'
+                        : 'No local parcel reference dataset is available yet.'}
+                    </p>
+                  )}
+                </div>
               </div>
 
               <div className="border rounded-lg p-4">
@@ -750,7 +888,7 @@ const Admin = () => {
       {/* Add User Modal */}
       {isAddModalOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[12000]">
-          <div className="bg-white dark:bg-gray-800 dark:text-white p-6 rounded-lg w-96">
+          <div className="bg-white dark:bg-gray-800 dark:text-white p-6 rounded-lg w-full max-w-[calc(100vw-2rem)] sm:max-w-md mx-4">
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Add New User</h3>
               <button
@@ -904,7 +1042,7 @@ const Admin = () => {
       {/* Reject Claim Modal */}
       {isRejectModalOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[12000]">
-          <div className="bg-white dark:bg-gray-800 dark:text-white p-6 rounded-lg w-96 shadow-lg">
+          <div className="bg-white dark:bg-gray-800 dark:text-white p-6 rounded-lg w-full max-w-[calc(100vw-2rem)] sm:max-w-md mx-4 shadow-lg">
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Reject Claim #{rejectClaimId}</h3>
               <button

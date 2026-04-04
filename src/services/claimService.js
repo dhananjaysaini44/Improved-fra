@@ -3,6 +3,8 @@ import { API_BASE_URL } from '../config/api';
 
 const safeJsonParse = (value, fallback) => {
   try {
+    if (value === null || value === undefined || value === '') return fallback;
+    if (typeof value !== 'string') return value;
     return value ? JSON.parse(value) : fallback;
   } catch {
     return fallback;
@@ -11,6 +13,9 @@ const safeJsonParse = (value, fallback) => {
 
 const normalizeClaim = (claim) => {
   const modelResult = safeJsonParse(claim.model_result, null);
+  const pipelineResult = safeJsonParse(claim.pipeline_result, null);
+  const extractedFields = modelResult?.extracted_fields || null;
+  const gisDiagnostics = pipelineResult?.gis || null;
   return {
     ...claim,
     claimId: `FRA-2024-${claim.id.toString().padStart(3, '0')}`,
@@ -19,9 +24,18 @@ const normalizeClaim = (claim) => {
     documents: safeJsonParse(claim.documents, []),
     polygon: safeJsonParse(claim.polygon, []),
     modelResult,
+    pipelineResult,
     modelStatus: claim.model_status || null,
+    pipelineStatus: claim.pipeline_status || pipelineResult?.pipeline_status || null,
+    pipelineError: claim.pipeline_error || pipelineResult?.error || null,
     duplicateAnalysis: modelResult?.duplicate_analysis || null,
-    extractedFields: modelResult?.extracted_fields || null,
+    extractedFields,
+    gisDiagnostics,
+    confidenceScores: pipelineResult?.score || null,
+    spatialConflicts: gisDiagnostics?.conflicts || [],
+    gisWarnings: gisDiagnostics?.warnings || [],
+    parcelMatch: pipelineResult?.parcel || null,
+    reviewSummary: safeJsonParse(claim.review_summary, claim.review_summary || null),
     ocrText: modelResult?.ocr_text || '',
   };
 };

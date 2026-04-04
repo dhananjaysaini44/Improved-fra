@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 import io
@@ -13,36 +14,11 @@ import re
 import shutil
 import sqlite3
 import tempfile
+import importlib
 
-try:
-    from PIL import Image
-except Exception:
-    Image = None
-
-try:
-    import cv2
-except Exception:
-    cv2 = None
-
-try:
-    import numpy as np
-except Exception:
-    np = None
-
-try:
-    import pytesseract
-except Exception:
-    pytesseract = None
-
-try:
-    from pdf2image import convert_from_path
-except Exception:
-    convert_from_path = None
-
-try:
-    from pypdf import PdfReader
-except Exception:
-    PdfReader = None
+from ml_pipeline.exceptions import PipelineError
+from ml_pipeline.models.nlp_model import load_nlp_model
+from ml_pipeline.pipeline import MLPipeline
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -70,11 +46,14 @@ FIELD_PATTERNS = {
     ],
     "gram_panchayat": [
         r"Gram Panchayat\s*[:\-]\s*(.+)",
+        r"G\.?\s*P\.?\s*[:\-]\s*(.+)",
+        r"Panchayat\s*[:\-]\s*(.+)",
     ],
     "tehsil_taluka": [
         r"Tehsil/Taluka\s*[:\-]\s*(.+)",
         r"Tehsil\s*[:\-]\s*(.+)",
         r"Taluka\s*[:\-]\s*(.+)",
+        r"Taluk\s*[:\-]\s*(.+)",
     ],
     "district": [
         r"District\s*[:\-]\s*(.+)",
@@ -97,12 +76,58 @@ FIELD_PATTERNS = {
         r"Extent of Land\s*[:\-]\s*(.+)",
         r"Land Area\s*[:\-]\s*(.+)",
     ],
+    "survey_number": [
+        r"Survey(?: No| Number)?\s*[:#\-]?\s*([0-9A-Za-z/\-]{1,30})",
+        r"S\.\s*No\.?\s*[:#\-]?\s*([0-9A-Za-z/\-]{1,30})",
+    ],
+    "khata_number": [
+        r"Khata(?: No| Number)?\s*[:#\-]?\s*([0-9A-Za-z/\-]{1,30})",
+        r"Khatha(?: No| Number)?\s*[:#\-]?\s*([0-9A-Za-z/\-]{1,30})",
+        r"Patta(?: No| Number)?\s*[:#\-]?\s*([0-9A-Za-z/\-]{1,30})",
+    ],
+    "hissa_number": [
+        r"Hissa(?: No| Number)?\s*[:#\-]?\s*([0-9A-Za-z/\-]{1,20})",
+        r"Sub(?:division)?\s*[:#\-]?\s*([0-9A-Za-z/\-]{1,20})",
+    ],
+    "forest_compartment": [
+        r"Forest Compartment\s*[:#\-]?\s*([0-9A-Za-z/\-]{1,30})",
+        r"Compartment\s*[:#\-]?\s*([0-9A-Za-z/\-]{1,30})",
+        r"Comp\.\s*[:#\-]?\s*([0-9A-Za-z/\-]{1,30})",
+    ],
+    "forest_beat": [
+        r"Forest Beat\s*[:#\-]?\s*([A-Za-z0-9\s\-]{2,40})",
+        r"Beat\s*[:#\-]?\s*([A-Za-z0-9\s\-]{2,40})",
+    ],
+    "forest_range": [
+        r"Forest Range\s*[:#\-]?\s*([A-Za-z0-9\s\-]{2,40})",
+        r"Range\s*[:#\-]?\s*([A-Za-z0-9\s\-]{2,40})",
+    ],
+    "boundary_north": [
+        r"North\s*[:\-]\s*(.+?)(?=\n|South|East|West|$)",
+    ],
+    "boundary_south": [
+        r"South\s*[:\-]\s*(.+?)(?=\n|North|East|West|$)",
+    ],
+    "boundary_east": [
+        r"East\s*[:\-]\s*(.+?)(?=\n|North|South|West|$)",
+    ],
+    "boundary_west": [
+        r"West\s*[:\-]\s*(.+?)(?=\n|North|South|East|$)",
+    ],
+    "land_area_ha": [
+        r"([0-9]+(?:\.[0-9]+)?)\s*(?:hectare|hectares|ha\b)",
+    ],
+    "pin_code": [
+        r"\b([1-9][0-9]{5})\b",
+    ],
     "attached_map": [
         r"Attached Map\s*[:\-]\s*(.+)",
     ],
     "supporting_evidence": [
         r"Supporting Evidence(?: of Occupation)?\s*[:\-]\s*(.+)",
     ],
+    "photo_exif_lat": [],
+    "photo_exif_lon": [],
 }
 
 LOCATION_BOUNDARY_PATTERNS = [
@@ -117,9 +142,76 @@ TESSERACT_CMD = os.getenv("TESSERACT_CMD", "").strip()
 TESSERACT_LANG = os.getenv("TESSERACT_LANG", "eng").strip() or "eng"
 TESSERACT_PSM = os.getenv("TESSERACT_PSM", "6").strip() or "6"
 TESSERACT_OEM = os.getenv("TESSERACT_OEM", "3").strip() or "3"
+TESSERACT_TIMEOUT_SEC = float(os.getenv("TESSERACT_TIMEOUT_SEC", "20").strip() or "20")
+PDF_OCR_MAX_PAGES = int(os.getenv("PDF_OCR_MAX_PAGES", "2").strip() or "2")
+PDF_OCR_DPI = int(os.getenv("PDF_OCR_DPI", "140").strip() or "140")
+OCR_MAX_IMAGE_SIDE = int(os.getenv("OCR_MAX_IMAGE_SIDE", "1800").strip() or "1800")
+MODEL_API_KEY = os.getenv("MODEL_API_KEY", "").strip()
 
-if pytesseract is not None and TESSERACT_CMD:
-    pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
+_OPTIONAL_IMPORTS: Dict[str, Any] = {}
+
+
+def _load_optional(module_name: str, attr: Optional[str] = None) -> Any:
+    key = f"{module_name}:{attr or ''}"
+    if key in _OPTIONAL_IMPORTS:
+        return _OPTIONAL_IMPORTS[key]
+    try:
+        module = importlib.import_module(module_name)
+        value = getattr(module, attr) if attr else module
+    except Exception:
+        value = None
+    _OPTIONAL_IMPORTS[key] = value
+    return value
+
+
+def pil_image_module() -> Any:
+    return _load_optional("PIL.Image")
+
+
+def cv2_module() -> Any:
+    return _load_optional("cv2")
+
+
+def numpy_module() -> Any:
+    return _load_optional("numpy")
+
+
+def pytesseract_module() -> Any:
+    module = _load_optional("pytesseract")
+    if module is not None and TESSERACT_CMD:
+        try:
+            module.pytesseract.tesseract_cmd = TESSERACT_CMD
+        except Exception:
+            pass
+    return module
+
+
+def convert_from_path_fn() -> Any:
+    return _load_optional("pdf2image", "convert_from_path")
+
+
+def pdf_reader_cls() -> Any:
+    return _load_optional("pypdf", "PdfReader")
+
+
+def verify_api_key(x_api_key: Optional[str]) -> None:
+    if not MODEL_API_KEY:
+        return
+    if x_api_key != MODEL_API_KEY:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+class PipelineRequest(BaseModel):
+    claim_id: Optional[int] = None
+    claim: Optional[Dict[str, Any]] = None
+    existing_claims: Optional[List[Dict[str, Any]]] = None
+    model_result: Optional[Dict[str, Any]] = None
+
+
+@app.on_event("startup")
+async def startup_event() -> None:
+    # Preload embedding backend. Falls back gracefully if transformer model isn't available.
+    load_nlp_model()
 
 
 def utc_now_iso() -> str:
@@ -164,6 +256,7 @@ def try_decode_bytes(payload: bytes) -> str:
 
 
 def tesseract_runtime_available() -> bool:
+    pytesseract = pytesseract_module()
     if pytesseract is None:
         return False
     explicit = getattr(pytesseract.pytesseract, "tesseract_cmd", "") or ""
@@ -186,6 +279,7 @@ def extract_pdf_text_fallback(payload: bytes) -> str:
 
 
 def extract_pdf_text_with_reader(payload: bytes) -> str:
+    PdfReader = pdf_reader_cls()
     if PdfReader is None:
         return ""
     try:
@@ -201,10 +295,21 @@ def extract_pdf_text_with_reader(payload: bytes) -> str:
 
 
 def preprocess_image_bytes(payload: bytes) -> Optional["np.ndarray"]:
+    Image = pil_image_module()
+    cv2 = cv2_module()
+    np = numpy_module()
     if Image is None or cv2 is None or np is None:
         return None
     try:
         image = Image.open(io.BytesIO(payload)).convert("RGB")
+        max_side = max(1, OCR_MAX_IMAGE_SIDE)
+        if max(image.size) > max_side:
+            scale = max_side / float(max(image.size))
+            new_size = (
+                max(1, int(image.size[0] * scale)),
+                max(1, int(image.size[1] * scale)),
+            )
+            image = image.resize(new_size)
         image_np = np.array(image)
         gray = cv2.cvtColor(image_np, cv2.COLOR_RGB2GRAY)
         denoised = cv2.fastNlMeansDenoising(gray)
@@ -224,6 +329,10 @@ def preprocess_image_bytes(payload: bytes) -> Optional["np.ndarray"]:
 
 
 def run_ocr_on_image(payload: bytes) -> Tuple[str, Dict[str, Any]]:
+    Image = pil_image_module()
+    cv2 = cv2_module()
+    np = numpy_module()
+    pytesseract = pytesseract_module()
     dependency_status = {
         "pillow": Image is not None,
         "opencv": cv2 is not None,
@@ -252,6 +361,7 @@ def run_ocr_on_image(payload: bytes) -> Tuple[str, Dict[str, Any]]:
             image,
             lang=TESSERACT_LANG,
             config=build_tesseract_config(),
+            timeout=TESSERACT_TIMEOUT_SEC,
         )
         return sanitize_text(text), {
             "method": "tesseract_image",
@@ -267,6 +377,12 @@ def run_ocr_on_image(payload: bytes) -> Tuple[str, Dict[str, Any]]:
 
 
 def run_ocr_on_pdf(payload: bytes) -> Tuple[str, Dict[str, Any]]:
+    PdfReader = pdf_reader_cls()
+    convert_from_path = convert_from_path_fn()
+    Image = pil_image_module()
+    cv2 = cv2_module()
+    np = numpy_module()
+    pytesseract = pytesseract_module()
     embedded_text = extract_pdf_text_with_reader(payload)
     if embedded_text:
         return embedded_text, {
@@ -301,21 +417,37 @@ def run_ocr_on_pdf(payload: bytes) -> Tuple[str, Dict[str, Any]]:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_pdf = Path(temp_dir) / "input.pdf"
             temp_pdf.write_bytes(payload)
-            images = convert_from_path(str(temp_pdf))
+            max_pages = max(1, PDF_OCR_MAX_PAGES)
+            images = convert_from_path(
+                str(temp_pdf),
+                dpi=max(72, PDF_OCR_DPI),
+                first_page=1,
+                last_page=max_pages,
+                fmt="png",
+                thread_count=1,
+            )
             extracted_pages = []
-            for image in images:
+            for page_index, image in enumerate(images):
                 img_bytes = io.BytesIO()
                 image.save(img_bytes, format="PNG")
                 page_text, _ = run_ocr_on_image(img_bytes.getvalue())
                 if page_text:
                     extracted_pages.append(page_text)
+                # Early stop once we have enough high-signal text for field extraction.
+                combined = "\n".join(extracted_pages)
+                if page_index >= 0 and len(combined) > 350 and (
+                    re.search(r"Survey(?: No| Number)?\s*[:#\-]?", combined, flags=re.IGNORECASE)
+                    or re.search(r"Khata(?: No| Number)?\s*[:#\-]?", combined, flags=re.IGNORECASE)
+                    or re.search(r"(?:hectare|ha\b)", combined, flags=re.IGNORECASE)
+                ):
+                    break
             text = "\n".join(extracted_pages)
             if not text:
                 text = extract_pdf_text_fallback(payload)
             return sanitize_text(text), {
                 "method": "tesseract_pdf",
                 "dependency_status": dependency_status,
-                "message": "OCR completed on PDF content.",
+                "message": f"OCR completed on PDF content (up to {max_pages} page(s) at {max(72, PDF_OCR_DPI)} DPI).",
             }
     except Exception as exc:
         fallback_text = extract_pdf_text_fallback(payload)
@@ -371,6 +503,79 @@ def extract_year_candidates(text: str) -> List[str]:
     return list(dict.fromkeys(re.findall(r"\b(19\d{2}|20\d{2})\b", text)))
 
 
+def _convert_exif_coord(value: Any, ref: Optional[str]) -> Optional[float]:
+    try:
+        parts = list(value)
+        if len(parts) != 3:
+            return None
+
+        def _to_float(part: Any) -> float:
+            if isinstance(part, tuple) and len(part) == 2 and part[1]:
+                return float(part[0]) / float(part[1])
+            if hasattr(part, "numerator") and hasattr(part, "denominator") and part.denominator:
+                return float(part.numerator) / float(part.denominator)
+            return float(part)
+
+        degrees = _to_float(parts[0])
+        minutes = _to_float(parts[1])
+        seconds = _to_float(parts[2])
+        decimal = degrees + (minutes / 60.0) + (seconds / 3600.0)
+        if str(ref or "").upper() in {"S", "W"}:
+            decimal *= -1
+        return round(decimal, 8)
+    except Exception:
+        return None
+
+
+def extract_exif_gps(payload: bytes) -> Dict[str, Any]:
+    if not payload.startswith(b"\xff\xd8"):
+        return {"photo_exif_lat": None, "photo_exif_lon": None}
+
+    Image = pil_image_module()
+    ExifTags = _load_optional("PIL.ExifTags")
+    if Image is None or ExifTags is None:
+        return {"photo_exif_lat": None, "photo_exif_lon": None}
+
+    try:
+        image = Image.open(io.BytesIO(payload))
+        exif = None
+        try:
+            exif = image.getexif()
+        except Exception:
+            exif = None
+        if not exif and hasattr(image, "_getexif"):
+            try:
+                exif = image._getexif()
+            except Exception:
+                exif = None
+        if not exif:
+            return {"photo_exif_lat": None, "photo_exif_lon": None}
+
+        gps_info = None
+        gps_tag_id = next((tag_id for tag_id, name in ExifTags.TAGS.items() if name == "GPSInfo"), None)
+        if isinstance(exif, dict):
+            gps_info = exif.get(gps_tag_id)
+        else:
+            try:
+                gps_info = exif.get(gps_tag_id)
+            except Exception:
+                gps_info = None
+        if not gps_info:
+            return {"photo_exif_lat": None, "photo_exif_lon": None}
+
+        gps_tags = ExifTags.GPSTAGS
+        mapped = {
+            gps_tags.get(tag_id, tag_id): gps_info[tag_id]
+            for tag_id in gps_info
+        }
+
+        lat = _convert_exif_coord(mapped.get("GPSLatitude"), mapped.get("GPSLatitudeRef"))
+        lon = _convert_exif_coord(mapped.get("GPSLongitude"), mapped.get("GPSLongitudeRef"))
+        return {"photo_exif_lat": lat, "photo_exif_lon": lon}
+    except Exception:
+        return {"photo_exif_lat": None, "photo_exif_lon": None}
+
+
 def extract_structured_fields(text: str, metadata: Dict[str, Any]) -> Dict[str, Any]:
     extracted = {field: None for field in FIELD_PATTERNS}
     for field, patterns in FIELD_PATTERNS.items():
@@ -404,6 +609,9 @@ def extract_structured_fields(text: str, metadata: Dict[str, Any]) -> Dict[str, 
         "has_aadhaar_candidate": bool(aadhaar_candidates),
         "has_location_boundary_section": bool(extracted.get("location_boundaries")),
         "has_land_extent": bool(extracted.get("extent_of_land")),
+        "has_survey_number": bool(extracted.get("survey_number")),
+        "has_forest_reference": bool(extracted.get("forest_compartment") or extracted.get("forest_beat") or extracted.get("forest_range")),
+        "has_exif_coordinates": bool(extracted.get("photo_exif_lat") is not None and extracted.get("photo_exif_lon") is not None),
     }
 
     extracted["normalized"] = {
@@ -599,6 +807,10 @@ def detect_duplicates(
 def build_document_result(document: UploadFile, payload: bytes, metadata: Dict[str, Any]) -> Dict[str, Any]:
     text, extraction_info = extract_document_text(document.filename or "unknown", payload, document.content_type)
     structured_fields = extract_structured_fields(text, metadata)
+    exif_fields = extract_exif_gps(payload)
+    for key, value in exif_fields.items():
+        if structured_fields.get(key) is None:
+            structured_fields[key] = value
     return {
         "filename": document.filename,
         "size_bytes": len(payload),
@@ -653,6 +865,12 @@ def estimate_extraction_confidence(extracted_fields: Dict[str, Any], duplicate_a
 
 @app.get("/health")
 def health() -> Dict[str, Any]:
+    Image = pil_image_module()
+    cv2 = cv2_module()
+    np = numpy_module()
+    pytesseract = pytesseract_module()
+    convert_from_path = convert_from_path_fn()
+    PdfReader = pdf_reader_cls()
     return {
         "status": "ok",
         "time": utc_now_iso(),
@@ -679,7 +897,15 @@ def health() -> Dict[str, Any]:
 async def predict(
     documents: List[UploadFile] = File(default=[]),
     metadata: Optional[str] = Form(default=None),
+    x_api_key: Optional[str] = Header(default=None),
 ) -> JSONResponse:
+    verify_api_key(x_api_key)
+    Image = pil_image_module()
+    cv2 = cv2_module()
+    np = numpy_module()
+    pytesseract = pytesseract_module()
+    convert_from_path = convert_from_path_fn()
+    PdfReader = pdf_reader_cls()
     parsed_metadata = {}
     if metadata:
         try:
@@ -737,6 +963,40 @@ async def predict(
         pass
 
     return JSONResponse(content=result)
+
+
+@app.post("/pipeline/run")
+async def run_pipeline(req: PipelineRequest, x_api_key: Optional[str] = Header(default=None)) -> JSONResponse:
+    verify_api_key(x_api_key)
+    try:
+        if req.claim is not None:
+            result = MLPipeline.run_from_payload(
+                {
+                    "claim": req.claim,
+                    "existing_claims": req.existing_claims or [],
+                    "model_result": req.model_result or {},
+                }
+            )
+            return JSONResponse(content={"status": "ok", "mode": "payload", "claim_id": req.claim_id, "result": result})
+
+        if req.claim_id is None:
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "claim_id is required when claim payload is not provided"},
+            )
+
+        result = MLPipeline.run(req.claim_id)
+        return JSONResponse(content={"status": "ok", "mode": "db", "claim_id": req.claim_id, "result": result})
+    except PipelineError as exc:
+        return JSONResponse(
+            status_code=422,
+            content={"status": "error", "stage": exc.stage, "message": str(exc), "claim_id": req.claim_id},
+        )
+    except Exception as exc:
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": str(exc), "claim_id": req.claim_id},
+        )
 
 
 if __name__ == "__main__":

@@ -144,6 +144,14 @@ const Map = () => {
 
   const claimLabel = (c) => `${c.claimantName || 'Unknown'} — ${c.village || '-'}, ${c.district || '-'}, ${c.state || '-'}`;
 
+  const claimSpatialSummary = (claim) => {
+    if ((claim?.spatialConflicts || []).length > 0) return `${claim.spatialConflicts.length} conflict(s)`;
+    if ((claim?.gisWarnings || []).length > 0) return `${claim.gisWarnings.length} warning(s)`;
+    if (claim?.parcelMatch?.best_match?.reference_id) return `parcel ${claim.parcelMatch.best_match.reference_id}`;
+    if ((claim?.pipelineStatus || '').toUpperCase().startsWith('SCORED')) return 'GIS checked';
+    return 'Pipeline pending';
+  };
+
   const getClaimCenter = (claim) => {
     const b = getClaimBounds(claim);
     if (!b) return null;
@@ -297,6 +305,9 @@ const Map = () => {
                                <div style="font-size: 10px; color: #666; margin-top: 2px;">${coordList}${coords.length > 5 ? '<div>...</div>' : ''}</div>
                             </div>
                             <div style="font-size: 10px; color: #999; margin-top: 4px;">ID: ${claim.id}</div>
+                            <div><strong>Status:</strong> ${claim.status || 'pending'} </div>
+                            <div><strong>ID:</strong> ${claim.id}</div>
+                            <div><strong>Spatial:</strong> ${claimSpatialSummary(claim)}</div>
                           </div>`
                         );
                         layer.on('mousemove', (e) => {
@@ -341,8 +352,9 @@ const Map = () => {
               <Popup>
                 <div style={{ gap: '4px', display: 'flex', flexDirection: 'column' }}>
                   <div><strong>Selected Claim</strong></div>
-                  <div style={{ fontSize: '12px' }}>{(selectedClaim?.claimantName || 'Unknown')} — {(selectedClaim?.village || '-')}</div>
-                  <div style={{ fontSize: '10px', color: '#999' }}>ID: {selectedClaim?.id}</div>
+                  <div>{(selectedClaim?.claimantName || 'Unknown')} — {(selectedClaim?.village || '-')}, {(selectedClaim?.district || '-')}, {(selectedClaim?.state || '-')}</div>
+                  <div>ID: {selectedClaim?.id}</div>
+                  <div>Spatial: {claimSpatialSummary(selectedClaim)}</div>
                 </div>
               </Popup>
             </CircleMarker>
