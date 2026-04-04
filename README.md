@@ -12,7 +12,7 @@
 ![Docker](https://img.shields.io/badge/Docker-Containerized_ML_Pipeline-2496ED?logo=docker&logoColor=white)
 ![Algorand](https://img.shields.io/badge/Algorand-TestNet_Anchoring-000000?logo=algorand&logoColor=white)
 
-FRA Atlas and Web GIS System (Drishti) is a full-stack Forest Rights Act decision support system built for claim intake, claim tracking, admin review, GIS-based visualization, and audit visibility. The application combines a React/Vite frontend with an Express/SQLite backend and a deployed Python OCR/model service for document analysis during claim submission.
+FRA Atlas and Web GIS System (Drishti) is a full-stack Forest Rights Act decision support system built for claim intake, claim tracking, admin review, GIS-based visualization, and audit visibility. The application combines a React/Vite frontend, an Express/SQLite backend, a deployed Python OCR/model service for document analysis during claim submission, and Algorand blockchain anchoring for data integrity and tamper-evident auditability.
 
 ## What the project does
 
