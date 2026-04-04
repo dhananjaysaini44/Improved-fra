@@ -1,0 +1,44 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "khasra_no": "K001",
+        "khata_no": "KH001",
+        "area_hectares": 1.2,
+        "status": "available"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[78.0,20.0],[78.001,20.0],[78.001,20.001],[78.0,20.001],[78.0,20.0]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "khasra_no": "K002",
+        "khata_no": "KH002",
+        "area_hectares": 0.8,
+        "status": "available"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[78.002,20.0],[78.003,20.0],[78.003,20.001],[78.002,20.001],[78.002,20.0]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "khasra_no": "K003",
+        "khata_no": "KH003",
+        "area_hectares": 1.5,
+        "status": "available"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[78.004,20.0],[78.005,20.0],[78.005,20.001],[78.004,20.001],[78.004,20.0]]]
+      }
+    }
+  ]
+}

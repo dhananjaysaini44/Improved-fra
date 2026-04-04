@@ -4,6 +4,7 @@ import claimsReducer from './slices/claimsSlice';
 import alertsReducer from './slices/alertsSlice';
 import reportsReducer from './slices/reportsSlice';
 import usersReducer from './slices/usersSlice';
+import locationReducer from './slices/locationSlice';
 
 export const store = configureStore({
   reducer: {
@@ -12,5 +13,6 @@ export const store = configureStore({
     alerts: alertsReducer,
     reports: reportsReducer,
     users: usersReducer,
+    location: locationReducer,
   },
 });

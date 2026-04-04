@@ -1,0 +1,18 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "khasra_no": "K201",
+        "khata_no": "KH201",
+        "area_hectares": 3.0,
+        "status": "available"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[78.2,20.2],[78.201,20.2],[78.201,20.201],[78.2,20.201],[78.2,20.2]]]
+      }
+    }
+  ]
+}

@@ -172,6 +172,8 @@ app.use('/api/alerts', require('./routes/alerts'));
 app.use('/api/reports', require('./routes/reports'));
 app.use('/api/users', require('./routes/users'));
 app.use('/api/logs', require('./routes/logs'));
+app.use('/api/geo', require('./routes/geodata'));
+app.use('/api/admin', require('./routes/admin'));
 
 // Health check
 app.get('/api/health', (req, res) => {

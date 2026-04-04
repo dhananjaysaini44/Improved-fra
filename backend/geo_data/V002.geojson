@@ -1,0 +1,31 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "khasra_no": "K101",
+        "khata_no": "KH101",
+        "area_hectares": 2.5,
+        "status": "available"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[78.1,20.1],[78.101,20.1],[78.101,20.101],[78.1,20.101],[78.1,20.1]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "khasra_no": "K102",
+        "khata_no": "KH102",
+        "area_hectares": 1.1,
+        "status": "available"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[78.102,20.1],[78.103,20.1],[78.103,20.101],[78.102,20.101],[78.102,20.1]]]
+      }
+    }
+  ]
+}

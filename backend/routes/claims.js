@@ -11,6 +11,21 @@ const FormData = require('form-data');
 const { generateHash } = require('../utils/hash');
 const { anchorToAlgorand } = require('../services/algorand');
 
+const normalizeState = (state) => {
+  if (!state) return state;
+  const mapping = {
+    'MP': 'Madhya Pradesh',
+    'Madhyapradesh': 'Madhya Pradesh',
+    'OD': 'Odisha',
+    'OR': 'Odisha',
+    'Orissa': 'Odisha',
+    'TR': 'Tripura',
+    'TS': 'Telangana',
+    'TL': 'Telangana'
+  };
+  return mapping[state] || state;
+};
+
 
 // Ensure uploads directory exists
 const UPLOADS_ROOT = path.join(__dirname, '..', 'uploads');
@@ -624,7 +639,8 @@ router.get('/', (req, res) => {
 // Create new claim (JSON only, legacy)
 router.post('/', (req, res) => {
   try {
-    const { claimant_name, village, state, district, polygon, documents, user_id } = req.body;
+    let { claimant_name, village, state, district, polygon, documents, user_id } = req.body;
+    state = normalizeState(state);
     
     if (!claimant_name || !village || !state || !district) {
       return res.status(400).json({ message: 'Missing required fields' });
@@ -930,11 +946,30 @@ router.post('/:id/reject', authenticateToken, requireAdmin, async (req, res) => 
 router.post('/submit', upload.array('documents'), async (req, res) => {
   try {
     // Text fields
-    const { claimant_name, village, state, district, polygon, user_id } = req.body;
+    let { 
+      claimant_name, village, state, district, polygon, user_id,
+      khasra_no, khata_no, village_code, tehsil_code, patwari_name, land_area_hectares 
+    } = req.body;
+
+    state = normalizeState(state);
+
     if (!claimant_name || !village || !state || !district) {
       return res.status(400).json({ message: 'Missing required fields' });
     }
 
+    // PHASE 2 correction: Synchronous check for conflicting Khasra status
+    if (khasra_no && village_code) {
+      const conflict = db.prepare(`
+        SELECT id FROM claims 
+        WHERE khasra_no = ? AND village_code = ? AND status != 'rejected'
+      `).get(khasra_no, village_code);
+
+      if (conflict) {
+        return res.status(409).json({ 
+          message: 'Conflict: This Khasra is already claimed.', 
+          conflictingClaimId: conflict.id 
+        });
+      }
     const polygonStr = polygon ? polygon : '[]';
     const duplicateWindowSeconds = Number(process.env.CLAIM_DUPLICATE_WINDOW_SECONDS || 120);
     const recentDuplicate = findRecentDuplicateSubmission({
@@ -958,9 +993,16 @@ router.post('/submit', upload.array('documents'), async (req, res) => {
 
     // 1) Create claim record first (without documents yet)
     const insert = db.prepare(`
-      INSERT INTO claims (claimant_name, village, state, district, polygon, documents, user_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO claims (
+        claimant_name, village, state, district, polygon, documents, user_id,
+        khasra_no, khata_no, village_code, tehsil_code, patwari_name, land_area_hectares
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
+    
+    // Ensure polygon is a string (don't double-stringify if already stringified)
+    const polygonStr = (typeof polygon === 'string') ? polygon : JSON.stringify(polygon || []);
+    
     const info = insert.run(
       claimant_name,
       village,
@@ -968,9 +1010,23 @@ router.post('/submit', upload.array('documents'), async (req, res) => {
       district,
       polygonStr,
       JSON.stringify([]),
-      user_id || null
+      user_id || null,
+      khasra_no || null,
+      khata_no || null,
+      village_code || null,
+      tehsil_code || null,
+      patwari_name || null,
+      land_area_hectares || null
     );
     const claimId = info.lastInsertRowid;
+
+    // Update khasra_plots if linked
+    if (khasra_no && village_code) {
+      try {
+        db.prepare("UPDATE khasra_plots SET claimed_by = ? WHERE khasra_no = ? AND village_code = ?")
+          .run(claimId, khasra_no, village_code);
+      } catch (e) { /* plot might not be in our spatial table yet, handled gracefully */ }
+    }
 
     // 2) Move files to permanent folder per claim
     const claimDir = path.join(UPLOADS_ROOT, 'claims', String(claimId));

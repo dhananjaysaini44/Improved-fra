@@ -56,6 +56,20 @@ export default defineConfig({
             }
           },
           {
+            urlPattern: /\/api\/geo\/.*/i,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'geodata-cache',
+              expiration: {
+                maxEntries: 200,
+                maxAgeSeconds: 30 * 24 * 60 * 60 // 30 Days
+              },
+              cacheableResponse: {
+                statuses: [0, 200]
+              }
+            }
+          },
+          {
             urlPattern: /\/api\/.*/i,
             handler: 'NetworkFirst',
             options: {
