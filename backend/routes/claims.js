@@ -44,6 +44,19 @@ async function callModelAPI(files, payload) {
   const timeout = Number(process.env.MODEL_TIMEOUT_MS || 180000);
   const maxRetries = Number(process.env.MODEL_MAX_RETRIES || 2);
   const retryDelayMs = Number(process.env.MODEL_RETRY_DELAY_MS || 1500);
+  const extractErrorMessage = (err) => {
+    const status = err?.response?.status;
+    const detail = err?.response?.data;
+    if (status && detail) {
+      if (typeof detail === 'string') return `${status}: ${detail}`;
+      if (typeof detail === 'object') {
+        if (typeof detail.message === 'string') return `${status}: ${detail.message}`;
+        if (typeof detail.detail === 'string') return `${status}: ${detail.detail}`;
+        return `${status}: ${JSON.stringify(detail)}`;
+      }
+    }
+    return err?.message || 'Model API call failed';
+  };
 
   const shouldRetry = (err) => {
     if (!err) return false;
@@ -78,6 +91,7 @@ async function callModelAPI(files, payload) {
     } catch (err) {
       lastError = err;
       if (attempt > maxRetries || !shouldRetry(err)) {
+        err.message = extractErrorMessage(err);
         throw err;
       }
       await new Promise((resolve) => setTimeout(resolve, retryDelayMs * attempt));
@@ -578,12 +592,14 @@ function triggerPipelineAsync(claimId, claim, modelResult, existingClaims) {
 }
 
 function buildModelCandidates(currentClaimId) {
+  const maxCandidates = Number(process.env.MODEL_EXISTING_CLAIMS_LIMIT || 150);
   const rows = db.prepare(`
-    SELECT id, claimant_name, village, district, state, status, polygon, model_result, created_at
+    SELECT id, claimant_name, village, district, state, status, polygon, created_at
     FROM claims
     WHERE (? IS NULL OR id <> ?)
     ORDER BY created_at DESC
-  `).all(currentClaimId ?? null, currentClaimId ?? null);
+    LIMIT ?
+  `).all(currentClaimId ?? null, currentClaimId ?? null, Math.max(1, maxCandidates));
 
   return rows.map((row) => ({
     id: row.id,
@@ -593,7 +609,6 @@ function buildModelCandidates(currentClaimId) {
     state: row.state,
     polygon: row.polygon,
     status: row.status,
-    model_result: row.model_result,
     created_at: row.created_at,
   }));
 }
