@@ -957,6 +957,9 @@ router.post('/submit', upload.array('documents'), async (req, res) => {
       return res.status(400).json({ message: 'Missing required fields' });
     }
 
+    // Ensure polygon is a string (don't double-stringify if already stringified)
+    const polygonStr = (typeof polygon === 'string') ? polygon : JSON.stringify(polygon || []);
+
     // PHASE 2 correction: Synchronous check for conflicting Khasra status
     if (khasra_no && village_code) {
       const conflict = db.prepare(`
@@ -970,7 +973,8 @@ router.post('/submit', upload.array('documents'), async (req, res) => {
           conflictingClaimId: conflict.id 
         });
       }
-    const polygonStr = polygon ? polygon : '[]';
+    }
+
     const duplicateWindowSeconds = Number(process.env.CLAIM_DUPLICATE_WINDOW_SECONDS || 120);
     const recentDuplicate = findRecentDuplicateSubmission({
       claimant_name,
@@ -999,9 +1003,6 @@ router.post('/submit', upload.array('documents'), async (req, res) => {
       )
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    
-    // Ensure polygon is a string (don't double-stringify if already stringified)
-    const polygonStr = (typeof polygon === 'string') ? polygon : JSON.stringify(polygon || []);
     
     const info = insert.run(
       claimant_name,

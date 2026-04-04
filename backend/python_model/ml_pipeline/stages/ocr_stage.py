@@ -55,10 +55,23 @@ FIELD_PATTERNS = {
         r"Survey(?: No| Number)?\s*[:#\-]?\s*([0-9A-Za-z/\-]{1,30})",
         r"S\.\s*No\.?\s*[:#\-]?\s*([0-9A-Za-z/\-]{1,30})",
     ],
+    "khasra_number": [
+        r"Khasra(?: No| Number)?\s*[:#\-]?\s*([0-9A-Za-z/\-]{1,30})",
+        r"Khasra\s*[:#\-]?\s*([0-9A-Za-z/\-]{1,30})",
+    ],
     "khata_number": [
         r"Khata(?: No| Number)?\s*[:#\-]?\s*([0-9A-Za-z/\-]{1,30})",
         r"Khatha(?: No| Number)?\s*[:#\-]?\s*([0-9A-Za-z/\-]{1,30})",
         r"Patta(?: No| Number)?\s*[:#\-]?\s*([0-9A-Za-z/\-]{1,30})",
+    ],
+    "village_code": [
+        r"Village Code\s*[:\-]\s*([0-9A-Za-z/\-]{2,30})",
+    ],
+    "tehsil_code": [
+        r"Tehsil Code\s*[:\-]\s*([0-9A-Za-z/\-]{2,30})",
+    ],
+    "patwari_name": [
+        r"Patwari Name\s*[:\-]\s*(.+?)(?=\s+(?:Village Code|Tehsil Code|Date|Occupation|Record|Verification|Renewal|$))",
     ],
     "hissa_number": [
         r"Hissa(?: No| Number)?\s*[:#\-]?\s*([0-9A-Za-z/\-]{1,20})",
@@ -273,6 +286,14 @@ def _extract_structured_fields(text: str) -> dict[str, Any]:
     if aadhaar_candidates and not extracted.get("aadhaar_number"):
         extracted["aadhaar_number"] = aadhaar_candidates[0]
 
+    if not extracted.get("khasra_number") and extracted.get("survey_number"):
+        extracted["khasra_number"] = extracted["survey_number"]
+    if not extracted.get("survey_number") and extracted.get("khasra_number"):
+        extracted["survey_number"] = extracted["khasra_number"]
+    extracted["khasra_no"] = extracted.get("khasra_number")
+    extracted["khata_no"] = extracted.get("khata_number")
+    extracted["land_area_hectares"] = extracted.get("land_area_ha")
+
     extracted["years_mentioned"] = _extract_year_candidates(text)
     extracted["text_length"] = len(text)
     extracted["document_signals"] = {
@@ -355,6 +376,13 @@ def run(claim_id: int) -> Dict[str, Any]:
         "has_forest_reference": bool(merged_fields.get("forest_compartment") or merged_fields.get("forest_beat") or merged_fields.get("forest_range")),
         "has_exif_coordinates": bool(merged_fields.get("photo_exif_lat") is not None and merged_fields.get("photo_exif_lon") is not None),
     }
+    if not merged_fields.get("khasra_number") and merged_fields.get("survey_number"):
+        merged_fields["khasra_number"] = merged_fields["survey_number"]
+    if not merged_fields.get("survey_number") and merged_fields.get("khasra_number"):
+        merged_fields["survey_number"] = merged_fields["khasra_number"]
+    merged_fields["khasra_no"] = merged_fields.get("khasra_number")
+    merged_fields["khata_no"] = merged_fields.get("khata_number")
+    merged_fields["land_area_hectares"] = merged_fields.get("land_area_ha")
     return {
         "ocr_score": round(score, 4),
         "documents_processed": processed,

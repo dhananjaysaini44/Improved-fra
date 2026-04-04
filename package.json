@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "dev:frontend": "vite --strictPort false",
+    "dev:frontend": "vite --strictPort true",
     "dev:backend": "npm --prefix backend run dev",
     "dev:all": "concurrently -n backend,frontend -c yellow,cyan \"npm:dev:backend\" \"npm:dev:frontend\"",
     "build": "vite build",

@@ -9,11 +9,10 @@
 ![Redux](https://img.shields.io/badge/Redux_Toolkit-2-764ABC?logo=redux&logoColor=white)
 ![Leaflet](https://img.shields.io/badge/Leaflet-WebGIS-199900?logo=leaflet&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-Remote_OCR_Service-009688?logo=fastapi&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-Containerized_ML_Pipeline-2496ED?logo=docker&logoColor=white)
 ![Algorand](https://img.shields.io/badge/Algorand-TestNet_Anchoring-000000?logo=algorand&logoColor=white)
 
 FRA Atlas and Web GIS System (Drishti) is a full-stack Forest Rights Act decision support system built for claim intake, claim tracking, admin review, GIS-based visualization, and audit visibility. The application combines a React/Vite frontend with an Express/SQLite backend and a deployed Python OCR/model service for document analysis during claim submission.
-
-The current repository is the active non-fork project lineage (`Improved-fra`). It includes the main application, the deployed OCR/model service source, implementation notes, and supporting architecture documentation generated during development.
 
 ## What the project does
 
@@ -72,10 +71,9 @@ The UI is focused on the states referenced throughout the project:
 ```text
 .
 |-- backend/
+|   |-- geo_data/
 |   |-- middleware/
-|   |   `-- authMiddleware.js
 |   |-- models/
-|   |   `-- fraSchema.sql
 |   |-- python_model/
 |   |   |-- ml_pipeline/
 |   |   |   |-- db/
@@ -87,22 +85,14 @@ The UI is focused on the states referenced throughout the project:
 |   |   |-- requirements.txt
 |   |   `-- server.py
 |   |-- routes/
-|   |   |-- alerts.js
-|   |   |-- auth.js
-|   |   |-- claims.js
-|   |   |-- logs.js
-|   |   |-- reports.js
-|   |   `-- users.js
-|   |-- uploads/
-|   |-- .env
+|   |-- services/
+|   |-- tests/
+|   |-- utils/
 |   |-- db.js
-|   |-- fra_atlas.db
 |   |-- package.json
 |   `-- server.js
 |-- documentation/
-|-- dist/
 |-- public/
-|   `-- drishti-logo.svg
 |-- src/
 |   |-- components/
 |   |-- config/
@@ -110,22 +100,13 @@ The UI is focused on the states referenced throughout the project:
 |   |-- pages/
 |   |-- services/
 |   `-- store/
+|-- test_material/
 |-- eslint.config.js
-|-- index.html
 |-- package.json
 |-- render.yaml
 |-- vite.config.js
 `-- README.md
 ```
-
-The project also contains generated/build/runtime directories such as:
-
-- `dist/`
-- `backend/uploads/`
-- local SQLite database files
-- local editor configuration under `.idea/`
-
-These are part of the current repository state and should be understood when navigating the project, even if they are not all intended for production versioning.
 
 ## Application architecture
 
@@ -268,11 +249,11 @@ npm.cmd run dev:all
 Notes:
 
 - Backend runs on `http://localhost:3000`
-- Frontend prefers `http://localhost:5000` and automatically uses the next free port if `5000` is busy
+- Frontend runs on `http://localhost:5000` with strict port enabled
 
 ### 3. Configure backend environment
 
-Create `backend/.env` from `backend/.env.example`.
+Create `backend/.env` manually (the backend reads values from this file at startup).
 
 Example:
 
@@ -349,6 +330,15 @@ What the service does now:
 - Performs bounded OCR to stay reliable under free-tier constraints (image downscaling, per-call OCR timeout, and capped PDF OCR pages/DPI)
 - Returns extraction confidence and duplicate-analysis output
 
+Primary extracted OCR fields in `model_result.json` now include:
+
+- claimant and location fields (`claimant_name`, `village`, `district`, `state`, `gram_panchayat`, `tehsil_taluka`)
+- land-record identifiers (`khasra_number`, `khata_number`, `survey_number`, `hissa_number`)
+- claim-form aliases used in backend workflows (`khasra_no`, `khata_no`, `village_code`, `tehsil_code`, `patwari_name`, `land_area_hectares`)
+- land and boundary fields (`extent_of_land`, `land_area_ha`, `boundary_north/south/east/west`, `location_boundaries`)
+- forest references (`forest_compartment`, `forest_beat`, `forest_range`)
+- support and metadata fields (`attached_map`, `supporting_evidence`, `aadhaar_number`, `pin_code`, `years_mentioned`)
+
 Security and deployment notes:
 
 - `/health` remains open for deployment and readiness checks
@@ -410,6 +400,9 @@ Base path: `/api/claims`
 - `PUT /:id`
 - `DELETE /:id`
 - `GET /stats/summary`
+- `GET /stats/trends`
+- `GET /stats/state-distribution`
+- `GET /stats/district-distribution`
 - `POST /:id/approve`
 - `POST /:id/reject`
 - `POST /submit`
@@ -451,6 +444,24 @@ These routes require admin access.
 Base path: `/api/logs`
 
 - Log endpoints expose system audit records such as login and claim actions
+
+### Geo
+
+Base path: `/api/geo`
+
+- `GET /states`
+- `GET /districts/:state`
+- `GET /tehsils/:state/:district`
+- `GET /villages/:state/:district/:tehsil`
+- `POST /khasra/check`
+- `GET /khasra/:villageCode`
+
+### Admin
+
+Base path: `/api/admin`
+
+- `GET /claims/:id/khasra-verify`
+- `PATCH /claims/:id`
 
 ### Health
 
@@ -517,63 +528,16 @@ Runtime notes:
 - set `ALGORAND_MNEMONIC` for live anchoring
 - if mnemonic is missing/placeholder, anchoring is skipped and app flow continues
 
-## Build and quality status
-
-Current observed status from the repository:
-
-- `npm run build` succeeds
-- `cd backend && npm test` succeeds (pipeline read-model regression)
-- `npm run lint` currently fails
-
-Main reasons lint fails:
-
-- ESLint is scanning the CommonJS backend with rules configured for frontend/browser-style globals
-- Some frontend files contain unused variables and a missing hook dependency warning
-
-Additional build/runtime notes:
-
-- The main frontend bundle is large and triggers a Vite chunk-size warning
-- `react-leaflet-draw` emits a build warning related to a `leaflet-draw` export
-- Reports endpoints are placeholders
-- Password reset endpoints are placeholders
-- Some dashboard and activity data are still mocked in the frontend
-- The Python model service is deployed remotely and is intended to be called from the backend, not directly from the frontend
-
 ## Known limitations
 
-- No automated test suite is configured
-- Reports are not fully implemented
-- Forgot/reset password flows are placeholders
-- Dashboard analytics are mostly static mock data
-- OCR/model accuracy depends on document quality and installed OCR dependencies in the deployed service environment
-- The deployed Python service must stay within Render free-tier memory limits, so the NLP backend is intentionally lightweight
-- Lint configuration needs to be split or adjusted for frontend and backend environments
-
-## Suggested next improvements
-
-- Split ESLint config for browser and Node targets
-- Replace mocked dashboard data with live API-driven metrics
-- Implement real password reset flow
-- Replace placeholder report endpoints with persisted report generation
-- Add database seed scripts and sample credentials for local demos
-- Add automated tests for auth, claims, and admin flows
-- Document deployment for production environments
-- Separate tracked source documentation from runtime artifacts and editor-specific files
-- Add dedicated endpoints or UI views for inspecting pipeline results
-
-## Supporting documentation in the repository
-
-The repository also contains supporting PDFs, diagrams, and internal working notes.
-
-Documentation folder:
-
-- `documentation/` contains PDFs, diagrams, architecture exports, sequence diagrams, use-case diagrams, class diagrams, and deployment visuals
-
-Project working notes currently present at the root:
-
-- `todo.md`
-
-These files are useful for implementation continuity and project handoff, even when they are not directly used by the running application.
+- Automated test coverage is limited (current backend test focus is `tests/pipeline-read-model.test.js`)
+- Reports endpoints are still placeholder-style and not backed by full report-generation workflows
+- Forgot/reset password routes exist but are placeholder implementations
+- Several dashboard cards and activity views still rely on mock/static-style data
+- OCR extraction quality remains dependent on input document quality and OCR runtime dependencies in the deployed service
+- The deployed Python service is constrained by Render free-tier memory/runtime limits, so NLP/model choices are intentionally lightweight
+- Linting is not yet split cleanly between frontend (browser ESM) and backend (Node/CommonJS) contexts
+- Backend auth still permits a fallback JWT secret if `JWT_SECRET` is not explicitly set; this is not suitable for production
 
 ## Useful commands
 
@@ -594,6 +558,7 @@ npm.cmd run preview
 cd backend
 npm.cmd run dev
 npm.cmd start
+npm.cmd test
 ```
 
 From repository root:

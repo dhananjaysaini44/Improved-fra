@@ -7,6 +7,19 @@ const db = new Database(dbPath);
 
 // 1. Create Core Tables
 db.exec(`
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  email TEXT UNIQUE NOT NULL,
+  password TEXT NOT NULL,
+  name TEXT,
+  state TEXT,
+  district TEXT,
+  village TEXT,
+  phone TEXT,
+  role TEXT DEFAULT 'user',
+  gram_panchayat_id TEXT UNIQUE
+);
+
 CREATE TABLE IF NOT EXISTS claims (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   claimant_name TEXT NOT NULL,
@@ -69,6 +82,62 @@ CREATE TABLE IF NOT EXISTS location_hierarchy (
   village_code TEXT NOT NULL,
   village_name TEXT NOT NULL,
   UNIQUE(village_code, tehsil_code)
+);
+
+CREATE TABLE IF NOT EXISTS alerts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  type TEXT,
+  severity TEXT,
+  message TEXT,
+  location TEXT,
+  state TEXT,
+  status TEXT DEFAULT 'active',
+  created_at DATETIME DEFAULT (datetime('now', 'localtime'))
+);
+
+CREATE TABLE IF NOT EXISTS nlp_results (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  claim_id INTEGER UNIQUE,
+  similarity_score REAL,
+  is_duplicate INTEGER DEFAULT 0,
+  flagged_reason TEXT,
+  top_matching_claim INTEGER,
+  processed_at DATETIME DEFAULT (datetime('now', 'localtime'))
+);
+
+CREATE TABLE IF NOT EXISTS confidence_scores (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  claim_id INTEGER UNIQUE,
+  ocr_score REAL,
+  nlp_score REAL,
+  gis_score REAL,
+  overall_score REAL,
+  is_suspicious INTEGER DEFAULT 0,
+  computed_at DATETIME DEFAULT (datetime('now', 'localtime'))
+);
+
+CREATE TABLE IF NOT EXISTS spatial_conflicts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  claim_id INTEGER,
+  conflicting_claim_id INTEGER,
+  overlap_area REAL,
+  conflict_type TEXT,
+  is_resolved INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS land_parcels (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  claim_id INTEGER,
+  boundaries_geojson TEXT,
+  area REAL,
+  land_cover_type TEXT,
+  is_restricted INTEGER DEFAULT 0,
+  survey_date TEXT,
+  reference_id TEXT,
+  source_name TEXT,
+  match_confidence REAL,
+  match_basis TEXT,
+  metadata_json TEXT
 );
 `);
 

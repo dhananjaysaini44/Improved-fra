@@ -55,4 +55,6 @@ backend/*.json
 ml_pipeline_reconciled.md
 algorand_integration.md
 project.md
+PROJECT_ATLAS.md
+.cursorrules
 ocr_field_extraction_prompt.md
